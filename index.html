@@ -1,0 +1,1680 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>SI-PIKET - Sistem Informasi Guru Piket SMAN 1 Parung</title>
+  <!-- Tailwind CSS CDN -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <!-- React dan Babel CDN untuk JSX browser -->
+  <script src="https://unpkg.com/react@18/umd/react.development.js" crossorigin></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js" crossorigin></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <!-- QRCode.js Library -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+  <!-- Signature Pad Library -->
+  <script src="https://cdn.jsdelivr.net/npm/signature_pad@4.1.7/dist/signature_pad.umd.min.js"></script>
+  <!-- jsPDF Libraries untuk Download Rekap PDF -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js"></script>
+  <!-- Font Awesome Icons -->
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+
+  <style>
+    body { font-family: 'Plus Jakarta Sans', sans-serif; }
+    /* Memastikan elemen cetak hanya terlihat saat mencetak dengan printer (Ctrl+P) */
+    @media print {
+      body * { visibility: hidden !important; background-color: transparent !important; box-shadow: none !important; }
+      #print-section, #print-section * { visibility: visible !important; }
+      #print-section {
+        display: block !important; position: absolute !important; left: 0 !important; top: 0 !important;
+        width: 74mm !important; margin: 0 !important; padding: 2mm 0mm !important;
+        font-family: 'Courier New', Courier, monospace, sans-serif !important; color: #000 !important; line-height: 1.3 !important;
+      }
+      #print-section p, #print-section span, #print-section h2, #print-section h3, #print-section td {
+        color: #000 !important; font-weight: 600 !important;
+      }
+      .no-print-element { display: none !important; }
+    }
+  </style>
+</head>
+<body class="bg-slate-100 font-sans text-slate-800 min-h-screen">
+  <div id="root"></div>
+
+  <script>
+    (function () {
+      if (typeof google !== 'undefined' && google.script && google.script.run) {
+        // Sudah berjalan di dalam Apps Script asli (dibuka lewat URL .../exec bawaan
+        // Apps Script) - google.script.run bawaan dipakai apa adanya, shim ini dilewati.
+        return;
+      }
+
+      // ================================================================================
+      // SHIM google.script.run UNTUK HOSTING DI LUAR APPS SCRIPT (mis. GitHub + Vercel)
+      // --------------------------------------------------------------------------------
+      // Saat aplikasi ini dijalankan DI DALAM Google Apps Script, objek `google.script.run`
+      // disediakan otomatis oleh Google untuk memanggil fungsi di code.gs. Karena aplikasi
+      // ini di-hosting terpisah (statis) di Vercel, objek itu TIDAK PERNAH ada di browser -
+      // akibatnya kode di bawah selalu mengira "tidak terhubung ke backend" dan menampilkan
+      // data demo/dummy, walau data & filter tanggal di code.gs sudah benar.
+      //
+      // Shim ini MENIRU PERSIS cara pakai google.script.run (withSuccessHandler,
+      // withFailureHandler, lalu panggil nama fungsi apa pun) tapi di baliknya memakai
+      // fetch() ke Web App Apps Script yang sudah di-deploy sebagai API JSON (lihat
+      // doPost() di code.gs). Dengan begini, SELURUH kode React di file ini yang memanggil
+      // google.script.run.withSuccessHandler(...).getSiswaList() dst. TIDAK PERLU diubah -
+      // hanya URL di bawah ini yang perlu diisi sesuai deployment Anda.
+      // ================================================================================
+
+      // *** WAJIB DIISI ***: URL Web App Apps Script Anda (Deploy > Manage deployments >
+      // salin URL yang berakhiran "/exec"). Tanpa ini, aplikasi tetap akan memakai data demo.
+      var SIPIKET_API_URL = "https://script.google.com/macros/s/AKfycbyAjOHFBTFiqBt_nMVW38-j-JR-VLEYqYttfIDVJCPjRJ0UVQSDNrKnys6Qy27026M7bg/exec";
+
+      function callAppsScript_(fnName, args, onSuccess, onFailure) {
+        fetch(SIPIKET_API_URL, {
+          method: 'POST',
+          // PENTING: pakai 'text/plain' (bukan 'application/json') supaya browser TIDAK
+          // mengirim preflight request OPTIONS - Apps Script Web App tidak bisa menjawab
+          // preflight itu, jadi kalau pakai 'application/json' permintaan akan gagal
+          // diblokir CORS. code.gs tetap mem-parse isinya sebagai JSON secara manual.
+          headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+          body: JSON.stringify({ fn: fnName, args: args })
+        })
+          .then(function (res) { return res.json(); })
+          .then(function (json) {
+            if (json && json.success) {
+              if (onSuccess) onSuccess(json.result);
+            } else {
+              var msg = (json && json.error) || 'Terjadi kesalahan pada server.';
+              if (onFailure) onFailure(msg); else console.error('SI-PIKET API error (' + fnName + '):', msg);
+            }
+          })
+          .catch(function (err) {
+            if (onFailure) onFailure(err && err.message ? err.message : String(err));
+            else console.error('SI-PIKET API gagal terhubung (' + fnName + '):', err);
+          });
+      }
+
+      function makeRunner_() {
+        var successHandler = null;
+        var failureHandler = null;
+        var proxy = new Proxy({
+          withSuccessHandler: function (fn) { successHandler = fn; return proxy; },
+          withFailureHandler: function (fn) { failureHandler = fn; return proxy; },
+          withUserObject: function () { return proxy; }
+        }, {
+          get: function (target, prop) {
+            if (prop in target) return target[prop];
+            return function () {
+              callAppsScript_(prop, Array.prototype.slice.call(arguments), successHandler, failureHandler);
+              return proxy;
+            };
+          }
+        });
+        return proxy;
+      }
+
+      window.google = window.google || {};
+      window.google.script = window.google.script || {};
+      // "run" dibuat sebagai getter supaya SETIAP kali "google.script.run" diakses (mis. dua
+      // pemanggilan berbeda seperti .withSuccessHandler(a).getX() dan .withSuccessHandler(b).getY()
+      // yang dijalankan berurutan), masing-masing mendapat runner BARU dengan successHandler-nya
+      // sendiri - tidak saling menimpa satu sama lain.
+      Object.defineProperty(window.google.script, 'run', {
+        get: function () { return makeRunner_(); },
+        configurable: true
+      });
+    })();
+  </script>
+
+  <script type="text/babel">
+    const { useState, useMemo, useEffect, useRef } = React;
+
+
+    // === Helper Tanggal Lokal (WIB) ===
+    const pad2_ = (n) => String(n).padStart(2, '0');
+    const getLocalDateStr_ = (d = new Date()) =>
+      `${d.getFullYear()}-${pad2_(d.getMonth() + 1)}-${pad2_(d.getDate())}`;
+    const parseLocalDateStr_ = (dateStr) => {
+      const [y, m, d] = dateStr.split('-').map(Number);
+      return new Date(y, (m || 1) - 1, d || 1);
+    };
+
+    function App() {
+      const urlParams = new URLSearchParams(window.location.search);
+      const signSlipParam = urlParams.get('signSlip');
+
+      const [activeTab, setActiveTab] = useState('dashboard');
+      const [filterDate, setFilterDate] = useState(getLocalDateStr_());
+      const [currentDateTime, setCurrentDateTime] = useState(new Date());
+
+      useEffect(() => {
+        const timer = setInterval(() => setCurrentDateTime(new Date()), 1000);
+        return () => clearInterval(timer);
+      }, []);
+      
+      const [classes, setClasses] = useState([]);
+      const [permissions, setPermissions] = useState([]);
+      const [journals, setJournals] = useState([]);
+      const [siswaList, setSiswaList] = useState([]);
+      const [guruList, setGuruList] = useState([]);
+      const [selectedGuru, setSelectedGuru] = useState('Guru Piket');
+
+      // --- LOGIC ROTASI GURU PIKET OTOMATIS BERDASARKAN JAM ---
+      useEffect(() => {
+        if (guruList.length > 0) {
+          const updatePiketTeacher = () => {
+             const now = new Date();
+             const currentDayIndex = now.getDay(); 
+             const days = ["Minggu", "Senin", "Selasa", "Rabu", "Kamis", "Jumat", "Sabtu"];
+             const currentDayName = days[currentDayIndex];
+             
+             // Cari semua guru yang jadwalnya hari ini
+             const availableTeachersToday = guruList.filter(g => g.hari.toLowerCase() === currentDayName.toLowerCase());
+             
+             if (availableTeachersToday.length > 0) {
+               const currentHour = now.getHours();
+               // Membagi guru piket secara bergiliran berdasarkan jam saat ini
+               const teacherIndex = currentHour % availableTeachersToday.length;
+               const autoSelectedTeacher = availableTeachersToday[teacherIndex].nama;
+               
+               setSelectedGuru(prev => prev !== autoSelectedTeacher ? autoSelectedTeacher : prev);
+             } else {
+               setSelectedGuru('Guru Piket');
+             }
+          };
+
+          // Panggil langsung saat mounted / perubahan daftar guru
+          updatePiketTeacher();
+          // Set interval cek setiap menit
+          const intervalId = setInterval(updatePiketTeacher, 60000); 
+
+          return () => clearInterval(intervalId);
+        }
+      }, [guruList]);
+
+      const [notifOrtuList, setNotifOrtuList] = useState([]);
+      const [selectedKelasNotif, setSelectedKelasNotif] = useState('Semua');
+      const [missingContacts, setMissingContacts] = useState([]);
+
+      const [selectedClassDetail, setSelectedClassDetail] = useState(null);
+      const [newStudentAttendance, setNewStudentAttendance] = useState({ name: '', status: 'Terlambat', notes: '' });
+
+      const initialPermissionState = { studentName: '', class: '', type: 'Izin Pulang', reason: '', nis: '', mapelTeacher: '', gender: 'Laki-laki', noHpOrtu: '' };
+      const [newPermission, setNewPermission] = useState(initialPermissionState);
+      const [isNewStudentMode, setIsNewStudentMode] = useState(false); 
+      
+      const [newJournal, setNewJournal] = useState({ category: 'Umum', content: '' });
+      
+      // Modal Controls
+      const [showPermModal, setShowPermModal] = useState(false);
+      const [previewPermModal, setPreviewPermModal] = useState(null);
+      const [printPreviewModal, setPrintPreviewModal] = useState(null);
+      const [mobileSignSlip, setMobileSignSlip] = useState(null);
+      const [mobileSignRole, setMobileSignRole] = useState('guru_mapel');
+      const [directSignTarget, setDirectSignRole] = useState(null);
+
+      const [searchQuery, setSearchQuery] = useState('');
+      const [siswaSearchInput, setSiswaSearchInput] = useState('');
+      const [filteredSiswaSuggestions, setFilteredSiswaSuggestions] = useState([]);
+      
+      const [isLoading, setIsLoading] = useState(false);
+      const [toastMsg, setToastMsg] = useState('');
+
+      // Rekap PDF Export States
+      const [rekapMode, setRekapMode] = useState('mingguan');
+      const [rekapInputDate, setRekapInputDate] = useState(getLocalDateStr_());
+      const [rekapInputMonth, setRekapInputMonth] = useState(getLocalDateStr_().slice(0,7));
+      const [rekapSelectedClass, setRekapSelectedClass] = useState('Semua');
+      const [rekapData, setRekapData] = useState([]);
+      const [isFetchingRekap, setIsFetchingRekap] = useState(false);
+      const [rekapInfoText, setRekapInfoText] = useState('');
+
+      const signaturePadRef = useRef(null);
+      const canvasRef = useRef(null);
+      const directPadRef = useRef(null);
+      const directCanvasRef = useRef(null);
+
+      const triggerPrintSlip = (perm) => {
+        setPrintPreviewModal(perm);
+      };
+      
+      const executeBrowserPrint = () => {
+        setTimeout(() => { window.print(); }, 200);
+      };
+
+      const formattedLiveDate = useMemo(() => currentDateTime.toLocaleDateString('id-ID', {
+        weekday: 'long', day: 'numeric', month: 'long', year: 'numeric'
+      }), [currentDateTime]);
+
+      const formattedLiveTime = useMemo(() => currentDateTime.toLocaleTimeString('id-ID', {
+        hour: '2-digit', minute: '2-digit', second: '2-digit'
+      }), [currentDateTime]);
+
+      const uniqueClasses = useMemo(() => {
+        const clsSet = new Set();
+        siswaList.forEach(s => { if (s.kelas) clsSet.add(s.kelas) });
+        classes.forEach(c => { if (c.name) clsSet.add(c.name) });
+        return Array.from(clsSet).sort();
+      }, [siswaList, classes]);
+
+      const loadAllData = (dateTarget, isBackground = false) => {
+        if (typeof google !== 'undefined' && google.script && google.script.run) {
+          if (!isBackground) setIsLoading(true);
+          
+          google.script.run.withSuccessHandler(data => { if (data) setSiswaList(data); }).getSiswaList();
+          google.script.run.withSuccessHandler(data => {
+            if (data && data.length > 0) setGuruList(data);
+          }).getGuruList();
+          
+          google.script.run.withSuccessHandler(data => {
+            if (data) setPermissions(data);
+            if (!isBackground) setIsLoading(false);
+          }).getPermissions(dateTarget);
+          
+          google.script.run.withSuccessHandler(data => { if (data) setClasses(data); }).getAbsensiKelas(dateTarget);
+          google.script.run.withSuccessHandler(data => { if (data) setJournals(data); }).getJournals();
+          google.script.run.withSuccessHandler(data => { if (data) setNotifOrtuList(data); }).getNotifikasiOrangTua(dateTarget, selectedKelasNotif);
+          google.script.run.withSuccessHandler(data => { if (data) setMissingContacts(data); }).getMissingAttendanceContacts(dateTarget);
+        } else {
+            // Mock data untuk keperluan preview jika Google Apps Script tidak terdeteksi
+            setIsLoading(true);
+            setTimeout(() => {
+                // Menyiapkan data Guru lengkap agar fungsi rotasi bisa berjalan pada hari apapun di saat preview.
+                setGuruList([
+                    {nama: "Budi Santoso, M.Pd", hari: "Senin"}, {nama: "Siti Aminah, S.Pd", hari: "Senin"},
+                    {nama: "Rahman Hakim, S.Kom", hari: "Selasa"}, {nama: "Dina Mariana, S.Pd", hari: "Selasa"},
+                    {nama: "Umar Bakri, S.Pd", hari: "Rabu"}, {nama: "Nia Ramadhani, S.Pd", hari: "Rabu"},
+                    {nama: "Bapak Kamis Pertama", hari: "Kamis"}, {nama: "Ibu Kamis Kedua", hari: "Kamis"}, // Ditambah untuk tes hr Kamis
+                    {nama: "Ahmad Jaelani, S.Ag", hari: "Jumat"}
+                ]);
+                setSiswaList([
+                    {nis: "1234", nama: "Andi Saputra", kelas: "X-A", gender: "Laki-laki", noHpOrtu: "081234"},
+                    {nis: "1235", nama: "Budi Doremi", kelas: "X-B", gender: "Laki-laki", noHpOrtu: "081235"},
+                ]);
+                setPermissions([
+                    {id: 1, slipNumber: "PKT/20231026/001", studentName: "Andi Saputra", class: "X-A", type: "Izin Pulang", reason: "Sakit", time: "09:00", timeIn: "-", status: "Disetujui", piketTeacher: "Budi Santoso", mapelTeacher: "Siti Aminah", date: filterDate}
+                ]);
+                setClasses([
+                    {id: 1, name: "X-A", total: 30, present: 28, sick: 1, leave: 0, absent: 1, late: 0, earlyLeave: 0, students: [{name: "Andi Saputra", status: "Sakit", notes: "Demam", noHpOrtu: "081234"}, {name: "Bagas", status: "Alfa", notes: "", noHpOrtu: "-"}]},
+                    {id: 2, name: "X-B", total: 32, present: 32, sick: 0, leave: 0, absent: 0, late: 2, earlyLeave: 0, students: []}
+                ]);
+                setNotifOrtuList([
+                    {nisn: "1234", name: "Andi Saputra", kelas: "X-A", status: "SAKIT", notes: "Demam", noHpOrtu: "081234", waUrl: "#"}
+                ]);
+                setMissingContacts([
+                    {name: "Ketua Kelas XI-A", role: "Ketua", kelas: "XI-A", phone: "08999", waUrl: "#"}
+                ]);
+                setIsLoading(false);
+            }, 1000);
+        }
+      };
+
+      useEffect(() => {
+        loadAllData(filterDate, false);
+        // Auto-refresh tampilan tiap 30 detik - hanya menampilkan ulang data yang sudah ada
+        // di sheet lokal (Absensi_Kelas + sheet per kelas absen_<KELAS>), tidak mengakses
+        // spreadsheet sumber. Data di sheet lokal itu sendiri diperbarui oleh trigger
+        // auto-import di backend (lihat menu "SI-PIKET Admin" > Aktifkan Auto-Import).
+        const autoRefreshInterval = setInterval(() => loadAllData(filterDate, true), 30000);
+        return () => clearInterval(autoRefreshInterval);
+      }, [filterDate, selectedKelasNotif]);
+
+      useEffect(() => {
+        if (signSlipParam) {
+          const found = permissions.find(p => p.slipNumber === signSlipParam);
+          if (found) setMobileSignSlip(found);
+          else {
+            setMobileSignSlip({
+              slipNumber: signSlipParam, studentName: 'Siswa Piket', class: 'Kelas', type: 'Izin Keluar / Pulang',
+              reason: 'Permohonan Izin Resmi Sekolah', time: '08:00', mapelTeacher: 'Guru Mata Pelajaran', date: filterDate
+            });
+          }
+        }
+      }, [signSlipParam, permissions]);
+
+      useEffect(() => {
+        if (previewPermModal) {
+          const qrContainer = document.getElementById('qrcode-container');
+          if (qrContainer) {
+            qrContainer.innerHTML = '';
+            let baseUrl = window.location.href.split('?')[0];
+            if (!baseUrl || baseUrl === 'about:blank' || baseUrl.includes('googleusercontent.com')) baseUrl = window.location.origin + window.location.pathname;
+            const targetSignUrl = `${baseUrl}?signSlip=${encodeURIComponent(previewPermModal.slipNumber)}`;
+            try {
+              new QRCode(qrContainer, { text: targetSignUrl, width: 120, height: 120, colorDark: "#1e1b4b", colorLight: "#ffffff", correctLevel: QRCode.CorrectLevel.M });
+            } catch (err) {
+              const qrImg = document.createElement('img');
+              qrImg.src = `https://api.qrserver.com/v1/create-qr-code/?size=120x120&data=${encodeURIComponent(targetSignUrl)}`;
+              qrImg.alt = "QR Code Tanda Tangan";
+              qrImg.className = "w-28 h-28 object-contain rounded-lg border border-slate-200";
+              qrContainer.appendChild(qrImg);
+            }
+          }
+        }
+      }, [previewPermModal]);
+
+      useEffect(() => {
+        if (mobileSignSlip && canvasRef.current) signaturePadRef.current = new SignaturePad(canvasRef.current, { backgroundColor: 'rgb(255, 255, 255)', penColor: 'rgb(15, 23, 42)' });
+      }, [mobileSignSlip]);
+
+      useEffect(() => {
+        if (directSignTarget && directCanvasRef.current) directPadRef.current = new SignaturePad(directCanvasRef.current, { backgroundColor: 'rgb(255, 255, 255)', penColor: 'rgb(15, 23, 42)' });
+      }, [directSignTarget]);
+
+      const showToast = (msg) => { setToastMsg(msg); setTimeout(() => setToastMsg(''), 4000); };
+
+      const handleFetchRekapData = () => {
+        setIsFetchingRekap(true);
+        let startDate, endDate, info;
+        
+        if (rekapMode === 'mingguan') {
+          const d = parseLocalDateStr_(rekapInputDate);
+          const day = d.getDay() || 7; 
+          if(day !== 1) d.setDate(d.getDate() - (day - 1));
+          startDate = getLocalDateStr_(d);
+          d.setDate(d.getDate() + 4);
+          endDate = getLocalDateStr_(d);
+          info = `Menampilkan rekap mingguan dari Senin, ${startDate} s/d Jumat, ${endDate} | Kelas: ${rekapSelectedClass}`;
+        } else {
+          const [year, month] = rekapInputMonth.split('-');
+          startDate = `${year}-${month}-01`;
+          const lastDay = new Date(year, parseInt(month), 0).getDate();
+          endDate = `${year}-${month}-${lastDay}`;
+          info = `Menampilkan rekap bulanan untuk bulan ${month}-${year} | Kelas: ${rekapSelectedClass}`;
+        }
+
+        setRekapInfoText(info);
+
+        if (typeof google !== 'undefined' && google.script && google.script.run) {
+          google.script.run.withSuccessHandler((data) => {
+            setRekapData(data || []);
+            setIsFetchingRekap(false);
+            if(data && data.length > 0) showToast("Data rekap berhasil ditarik!");
+            else showToast("Tidak ada data pada periode dan kelas ini.");
+          }).getBulkRekap(startDate, endDate, rekapSelectedClass);
+        } else {
+          setTimeout(() => {
+            setRekapData([
+                {kelas: "X-A", nis: "1234", nama: "Andi Saputra", hadir: 4, sakit: 1, izin: 0, alfa: 0, dispen: 0, terlambat: 0, pulang_cepat: 0, persentase: "80.0%"}
+            ]);
+            setIsFetchingRekap(false);
+            showToast("Pratinjau data rekap berhasil dimuat!");
+          }, 1000);
+        }
+      };
+
+      const handleDownloadPDF = () => {
+        if (!rekapData || rekapData.length === 0) {
+          showToast("Data kosong, tidak ada yang bisa di-download.");
+          return;
+        }
+
+        const { jsPDF } = window.jspdf;
+        const doc = new jsPDF('p', 'pt', 'a4');
+        
+        const safeClassName = rekapSelectedClass === 'Semua' ? 'Semua Kelas' : rekapSelectedClass;
+        const periodText = rekapMode === 'mingguan' ? `Periode Mingguan: ${rekapInputDate}` : `Periode Bulan: ${rekapInputMonth}`;
+
+        doc.setFontSize(14);
+        doc.setFont("helvetica", "bold");
+        doc.text("REKAPITULASI ABSENSI SISWA - SMAN 1 PARUNG", 40, 40);
+        
+        doc.setFontSize(10);
+        doc.setFont("helvetica", "normal");
+        doc.text(`Kelas: ${safeClassName}`, 40, 60);
+        doc.text(periodText, 40, 75);
+
+        const tableColumn = ["No", "Kelas", "NIS", "Nama Siswa", "Hadir", "Sakit", "Izin", "Alfa", "Dispen", "Lambat", "Plg Cpt", "% Hadir"];
+        const tableRows = [];
+
+        rekapData.forEach((row, index) => {
+          const rowData = [
+            index + 1,
+            row.kelas,
+            row.nis,
+            row.nama,
+            row.hadir,
+            row.sakit,
+            row.izin,
+            row.alfa,
+            row.dispen,
+            row.terlambat,
+            row.pulang_cepat,
+            row.persentase
+          ];
+          tableRows.push(rowData);
+        });
+
+        doc.autoTable({
+          head: [tableColumn],
+          body: tableRows,
+          startY: 90,
+          theme: 'grid',
+          styles: { fontSize: 8, cellPadding: 4 },
+          headStyles: { fillColor: [79, 70, 229] }, 
+          alternateRowStyles: { fillColor: [248, 250, 252] } 
+        });
+
+        const fileName = `Rekap_Absensi_${safeClassName.replace(/[^a-zA-Z0-9]/g, '_')}_${rekapMode}.pdf`;
+        doc.save(fileName);
+        showToast("File PDF berhasil di-download!");
+      };
+
+      const handleSiswaSearchChange = (val) => {
+        setSiswaSearchInput(val);
+        setNewPermission(prev => ({ ...prev, studentName: val }));
+        if (val.trim() === '') { setFilteredSiswaSuggestions([]); return; }
+        const filtered = siswaList.filter(s => (s.nama && s.nama.toLowerCase().includes(val.toLowerCase())) || (s.nis && s.nis.includes(val))).slice(0, 5);
+        setFilteredSiswaSuggestions(filtered);
+      };
+
+      const selectSiswaSuggestion = (siswa) => {
+        setNewPermission({ ...newPermission, studentName: siswa.nama, class: siswa.kelas, nis: siswa.nis });
+        setSiswaSearchInput(siswa.nama);
+        setFilteredSiswaSuggestions([]);
+      };
+
+      const getNextQueueOrderAndSlip = () => {
+        const now = new Date();
+        const dateStr = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}${String(now.getDate()).padStart(2, '0')}`;
+        const todayPrefix = `PKT/${dateStr}/`;
+        const todaySlips = permissions.filter(p => p.slipNumber && p.slipNumber.startsWith(todayPrefix));
+        let nextOrder = 1;
+        if (todaySlips.length > 0) {
+          const numbers = todaySlips.map(p => { const parts = p.slipNumber.split('/'); return parseInt(parts[2], 10) || 0; });
+          nextOrder = Math.max(...numbers) + 1;
+        }
+        return { queueOrder: nextOrder, slipNumber: `${todayPrefix}${String(nextOrder).padStart(3, '0')}` };
+      };
+
+      const handleAddStudentAttendanceToClass = (e) => {
+        e.preventDefault();
+        if (!selectedClassDetail || !newStudentAttendance.name) return;
+        let targetUpdatedObj = null;
+        const updatedClasses = classes.map(c => {
+          if (c.id === selectedClassDetail.id || c.name === selectedClassDetail.name) {
+            const currentStudents = c.students || [];
+            const updatedStudents = [...currentStudents, { ...newStudentAttendance }];
+            let absent = 0, sick = 0, leave = 0, late = 0, earlyLeave = 0;
+            updatedStudents.forEach(st => {
+              const stStatus = (st.status || "").toLowerCase();
+              if (stStatus.includes('alfa') || stStatus.includes('alpha') || stStatus.includes('alpa')) absent++;
+              else if (stStatus.includes('sakit')) sick++;
+              else if (stStatus.includes('izin') || stStatus.includes('ijin')) leave++;
+              else if (stStatus.includes('terlambat')) late++;
+              else if (stStatus.includes('pulang cepat')) earlyLeave++;
+            });
+            targetUpdatedObj = { ...c, date: filterDate, total: updatedStudents.length, absent, sick, leave, late, earlyLeave, present: 0, students: updatedStudents };
+            setSelectedClassDetail(targetUpdatedObj);
+            return targetUpdatedObj;
+          }
+          return c;
+        });
+        setClasses(updatedClasses);
+        if (typeof google !== 'undefined' && google.script && google.script.run && targetUpdatedObj) {
+          google.script.run.saveAbsensiKelas(targetUpdatedObj);
+          google.script.run.withSuccessHandler(data => { if (data) setNotifOrtuList(data); }).getNotifikasiOrangTua(filterDate, selectedKelasNotif);
+        }
+        setNewStudentAttendance({ name: '', status: 'Terlambat', notes: '' });
+        showToast("Catatan ketidakhadiran siswa berhasil disimpan!");
+      };
+
+      const handleApprovePermission = (id) => {
+        const perm = permissions.find(p => p.id === id);
+        if (!perm) return;
+        setIsLoading(true);
+        const updatedPerm = { ...perm, status: "Disetujui" };
+        if (typeof google !== 'undefined' && google.script && google.script.run) {
+          google.script.run.withSuccessHandler((res) => {
+            if (res.success) {
+              setPermissions(prev => prev.map(p => p.id === id ? updatedPerm : p));
+              if (previewPermModal && previewPermModal.id === id) setPreviewPermModal(prev => ({ ...prev, status: 'Disetujui' }));
+              showToast("Status perizinan disetujui!");
+            }
+            setIsLoading(false);
+          }).savePermission(updatedPerm);
+        } else {
+          setPermissions(prev => prev.map(p => p.id === id ? updatedPerm : p));
+          if (previewPermModal && previewPermModal.id === id) setPreviewPermModal(prev => ({ ...prev, status: 'Disetujui' }));
+          showToast("Status perizinan disetujui!");
+          setIsLoading(false);
+        }
+      };
+
+      const handleRejectPermission = (id) => {
+        const perm = permissions.find(p => p.id === id);
+        if (!perm) return;
+        setIsLoading(true);
+        const updatedPerm = { ...perm, status: "Ditolak" };
+        if (typeof google !== 'undefined' && google.script && google.script.run) {
+          google.script.run.withSuccessHandler((res) => {
+            if (res.success) {
+              setPermissions(prev => prev.map(p => p.id === id ? updatedPerm : p));
+              if (previewPermModal && previewPermModal.id === id) setPreviewPermModal(prev => ({ ...prev, status: 'Ditolak' }));
+              showToast("Status perizinan ditolak!");
+            }
+            setIsLoading(false);
+          }).savePermission(updatedPerm);
+        } else {
+          setPermissions(prev => prev.map(p => p.id === id ? updatedPerm : p));
+          if (previewPermModal && previewPermModal.id === id) setPreviewPermModal(prev => ({ ...prev, status: 'Ditolak' }));
+          showToast("Status perizinan ditolak!");
+          setIsLoading(false);
+        }
+      };
+
+      const handleReturnStudent = (slipNumber) => {
+        setIsLoading(true);
+        const now = new Date();
+        const timeIn = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+        if (typeof google !== 'undefined' && google.script && google.script.run) {
+          google.script.run.withSuccessHandler((res) => {
+            if (res.success) {
+              setPermissions(prev => prev.map(p => p.slipNumber === slipNumber ? { ...p, status: 'Kembali', timeIn: timeIn } : p));
+              showToast("Siswa dicatat telah kembali ke sekolah!");
+            }
+            setIsLoading(false);
+          }).updatePermissionStatus(slipNumber, 'Kembali', timeIn, 'Siswa kembali ke kelas.');
+        } else {
+          setPermissions(prev => prev.map(p => p.slipNumber === slipNumber ? { ...p, status: 'Kembali', timeIn: timeIn } : p));
+          showToast("Siswa dicatat telah kembali ke sekolah!");
+          setIsLoading(false);
+        }
+      };
+
+      const handleAddPermission = (e) => {
+        e.preventDefault();
+        if (!newPermission.studentName || !newPermission.class || !newPermission.reason) return;
+        setIsLoading(true);
+        const now = new Date();
+        const timeString = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+        const { queueOrder, slipNumber } = getNextQueueOrderAndSlip();
+
+        if (isNewStudentMode && typeof google !== 'undefined' && google.script && google.script.run) {
+          google.script.run.withSuccessHandler((res) => {
+            if (res.success) {
+              setSiswaList(prev => [...prev, { nis: newPermission.nis || "-", nama: newPermission.studentName, kelas: newPermission.class, gender: newPermission.gender, noHpOrtu: newPermission.noHpOrtu }]);
+              showToast("Siswa baru berhasil ditambahkan ke Database!");
+            }
+          }).saveNewStudent(newPermission);
+        }
+
+        const newRecord = {
+          id: Date.now(), slipNumber: slipNumber, nis: newPermission.nis || "Manual", studentName: newPermission.studentName,
+          class: newPermission.class, type: newPermission.type, reason: newPermission.reason, time: timeString, timeIn: "-", status: 'Menunggu',
+          queueOrder: queueOrder, piketTeacher: selectedGuru, mapelTeacher: newPermission.mapelTeacher || "Guru Mapel",
+          date: filterDate,
+          signature: null, signatureMapel: null
+        };
+
+        if (typeof google !== 'undefined' && google.script && google.script.run) {
+          google.script.run.withSuccessHandler((res) => {
+            if (res.success) {
+              setPermissions([newRecord, ...permissions]);
+              setNewPermission(initialPermissionState);
+              setSiswaSearchInput(''); setIsNewStudentMode(false); setShowPermModal(false);
+              showToast("Permohonan izin berhasil disimpan!");
+            }
+            setIsLoading(false);
+          }).savePermission({ ...newRecord, date: filterDate });
+        } else {
+          setPermissions([newRecord, ...permissions]);
+          setNewPermission(initialPermissionState);
+          setSiswaSearchInput(''); setIsNewStudentMode(false); setShowPermModal(false);
+          showToast("Permohonan izin baru berhasil dibuat!");
+          setIsLoading(false);
+        }
+      };
+
+      const handleAddJournal = (e) => {
+        e.preventDefault();
+        if (!newJournal.content) return;
+        setIsLoading(true);
+        const now = new Date();
+        const timeString = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+        const newLog = { id: Date.now(), time: timeString, category: newJournal.category, piketTeacher: selectedGuru, content: newJournal.content, date: filterDate };
+        if (typeof google !== 'undefined' && google.script && google.script.run) {
+          google.script.run.withSuccessHandler((res) => {
+            if (res.success) {
+              setJournals([newLog, ...journals]);
+              setNewJournal({ category: 'Umum', content: '' });
+              showToast("Catatan jurnal berhasil disimpan!");
+            }
+            setIsLoading(false);
+          }).savePiketLog(newLog);
+        } else {
+          setJournals([newLog, ...journals]);
+          setNewJournal({ category: 'Umum', content: '' });
+          showToast("Catatan jurnal berhasil disimpan!");
+          setIsLoading(false);
+        }
+      };
+
+      const handleSendPesanOrtu = (item) => {
+        if (!item.waUrl || item.waUrl === "#") { alert('Nomor HP Orang Tua belum diisi di Sheet Siswa atau Data_Ortu!'); return; }
+        window.open(item.waUrl, '_blank');
+        if (typeof google !== 'undefined' && google.script && google.script.run) google.script.run.saveLogPesanOrangTua(item);
+        showToast(`Membuka WhatsApp untuk mengirim pesan ke Orang Tua ${item.name}`);
+      };
+
+      const handleSendAllPesanOrtu = async () => {
+        const validItems = filteredNotifOrtu.filter(item => item.waUrl && item.waUrl !== "#");
+        if (validItems.length === 0) { alert("Tidak ada nomor WhatsApp orang tua yang valid."); return; }
+        if (!window.confirm(`Anda akan mengirim pesan massal ke ${validItems.length} orang tua.\nPastikan Anda SUDAH MENGIZINKAN POP-UP BROWSER.\nLanjutkan?`)) return;
+
+        setIsLoading(true);
+        for (let i = 0; i < validItems.length; i++) {
+          const item = validItems[i];
+          showToast(`Memproses pesan ke-${i + 1} dari ${validItems.length} (${item.name})...`);
+          window.open(item.waUrl, '_blank');
+          if (typeof google !== 'undefined' && google.script && google.script.run) google.script.run.saveLogPesanOrangTua(item);
+          await new Promise(resolve => setTimeout(resolve, 2000));
+        }
+        setIsLoading(false);
+        showToast("Proses pengiriman pesan WhatsApp massal telah selesai!");
+      };
+
+      const handleSendAllPesanPengurus = async () => {
+        const validItems = missingContacts.filter(item => item.waUrl && item.waUrl !== "#");
+        if (validItems.length === 0) { alert("Tidak ada nomor WhatsApp pengurus kelas yang valid."); return; }
+        if (!window.confirm(`Anda akan mengirim peringatan ke ${validItems.length} Pengurus Kelas.\nPastikan Anda MENGIZINKAN POP-UP BROWSER.\nLanjutkan?`)) return;
+
+        setIsLoading(true);
+        for (let i = 0; i < validItems.length; i++) {
+          const item = validItems[i];
+          showToast(`Mengirim peringatan ke-${i + 1} dari ${validItems.length} (${item.kelas})...`);
+          window.open(item.waUrl, '_blank');
+          await new Promise(resolve => setTimeout(resolve, 2000));
+        }
+        setIsLoading(false);
+        showToast("Peringatan tagihan absensi selesai dikirim!");
+      };
+
+      const handleSendSignatureFromMobile = () => {
+        if (!signaturePadRef.current || signaturePadRef.current.isEmpty()) { alert('Silakan bubuhkan tanda tangan!'); return; }
+        const signatureDataUrl = signaturePadRef.current.toDataURL();
+        setIsLoading(true);
+        let updatedObj = null;
+        setPermissions(prev => prev.map(p => {
+          if (p.slipNumber === mobileSignSlip.slipNumber) {
+            if (mobileSignRole === 'guru_mapel') updatedObj = { ...p, signatureMapel: signatureDataUrl };
+            else updatedObj = { ...p, signature: signatureDataUrl, status: 'Disetujui' };
+            return updatedObj;
+          }
+          return p;
+        }));
+        if (typeof google !== 'undefined' && google.script && google.script.run && updatedObj) google.script.run.savePermission(updatedObj);
+        
+        setTimeout(() => {
+          setIsLoading(false);
+          alert('Tanda Tangan Terkirim!');
+          window.history.replaceState({}, document.title, window.location.pathname);
+          setMobileSignSlip(null);
+        }, 800);
+      };
+
+      const handleSaveDirectSignature = () => {
+        if (!directPadRef.current || directPadRef.current.isEmpty()) { alert('Silakan bubuhkan tanda tangan!'); return; }
+        const sigDataUrl = directPadRef.current.toDataURL();
+        const { role, perm } = directSignTarget;
+        let updatedObj = null;
+        setPermissions(prev => prev.map(p => {
+          if (p.id === perm.id) {
+            if (role === 'guru_mapel') updatedObj = { ...p, signatureMapel: sigDataUrl };
+            else updatedObj = { ...p, signature: sigDataUrl, status: 'Disetujui' };
+            return updatedObj;
+          }
+          return p;
+        }));
+        if (typeof google !== 'undefined' && google.script && google.script.run && updatedObj) google.script.run.savePermission(updatedObj);
+        if (previewPermModal && previewPermModal.id === perm.id) {
+          setPreviewPermModal(prev => {
+            if (role === 'guru_mapel') return { ...prev, signatureMapel: sigDataUrl };
+            else return { ...prev, signature: sigDataUrl, status: 'Disetujui' };
+          });
+        }
+        showToast(`Tanda tangan disimpan!`);
+        setDirectSignRole(null);
+      };
+
+      const clearSignatureCanvas = () => { if (signaturePadRef.current) signaturePadRef.current.clear(); };
+      const clearDirectCanvas = () => { if (directPadRef.current) directPadRef.current.clear(); };
+
+      const stats = useMemo(() => {
+        let totalPresent = 0, totalAbsent = 0, totalSick = 0, totalLeave = 0, totalLate = 0, totalEarlyLeave = 0;
+        classes.forEach(c => {
+          totalPresent += c.present || 0; totalAbsent += c.absent || 0; totalSick += c.sick || 0;
+          totalLeave += c.leave || 0; totalLate += c.late || 0; totalEarlyLeave += c.earlyLeave || 0;
+        });
+        const pendingPerms = permissions.filter(p => p.status === 'Menunggu').length;
+        const approvedPerms = permissions.filter(p => p.status === 'Disetujui' || p.status === 'Kembali').length;
+        return { totalPresent, totalAbsent, totalSick, totalLeave, totalLate, totalEarlyLeave, pendingPerms, approvedPerms };
+      }, [classes, permissions]);
+
+      const filteredPermissions = useMemo(() => {
+        return permissions.filter(p => 
+          (p.studentName && p.studentName.toLowerCase().includes(searchQuery.toLowerCase())) ||
+          (p.class && p.class.toLowerCase().includes(searchQuery.toLowerCase())) ||
+          (p.slipNumber && p.slipNumber.toLowerCase().includes(searchQuery.toLowerCase()))
+        );
+      }, [permissions, searchQuery]);
+
+      const filteredNotifOrtu = useMemo(() => {
+        if (selectedKelasNotif === 'Semua') return notifOrtuList;
+        return notifOrtuList.filter(n => n.kelas === selectedKelasNotif);
+      }, [notifOrtuList, selectedKelasNotif]);
+
+
+      // -------------- RENDER AREA -------------- //
+
+      if (mobileSignSlip) {
+        return (
+          <div className="min-h-screen bg-slate-900 text-slate-100 p-4 flex flex-col items-center justify-center">
+            <div className="max-w-md w-full bg-slate-800 rounded-3xl p-6 shadow-2xl border border-slate-700 space-y-5">
+              <div className="text-center border-b border-slate-700 pb-4">
+                <div className="w-12 h-12 bg-indigo-500/20 text-indigo-400 rounded-2xl flex items-center justify-center mx-auto mb-2 text-xl">
+                  <i className="fa-solid fa-signature"></i>
+                </div>
+                <h2 className="text-lg font-extrabold text-white">Konfirmasi Tanda Tangan Digital</h2>
+                <p className="text-xs text-slate-400">SI-PIKET PERIZINAN SISWA</p>
+              </div>
+
+              <div className="bg-slate-900/80 p-4 rounded-2xl border border-slate-700/60 text-xs space-y-2">
+                <div className="flex justify-between"><span className="text-slate-400">No. Slip:</span><span className="font-mono font-bold text-amber-400">{mobileSignSlip.slipNumber}</span></div>
+                <div className="flex justify-between"><span className="text-slate-400">Siswa:</span><span className="font-bold text-white">{mobileSignSlip.studentName} ({mobileSignSlip.class})</span></div>
+                <div className="flex justify-between"><span className="text-slate-400">Guru Mapel:</span><span className="font-semibold text-amber-300">{mobileSignSlip.mapelTeacher || 'Guru Mapel'}</span></div>
+                <div className="flex justify-between"><span className="text-slate-400">Perizinan:</span><span className="font-semibold text-indigo-300">{mobileSignSlip.type}</span></div>
+                <div className="pt-1 text-slate-300"><strong className="block text-[10px] text-slate-400 uppercase">Alasan:</strong>{mobileSignSlip.reason}</div>
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-slate-300 mb-1.5">Anda Bertindak Sebagai:</label>
+                <div className="grid grid-cols-2 gap-2">
+                  <button onClick={() => setMobileSignRole('guru_mapel')} className={`py-2 px-3 rounded-xl text-xs font-bold border transition flex items-center justify-center gap-1.5 ${mobileSignRole === 'guru_mapel' ? 'bg-amber-500/20 border-amber-500 text-amber-300' : 'bg-slate-900 border-slate-700 text-slate-400'}`}>
+                    <i className="fa-solid fa-chalkboard-user"></i> Guru Mapel
+                  </button>
+                  <button onClick={() => setMobileSignRole('guru_piket')} className={`py-2 px-3 rounded-xl text-xs font-bold border transition flex items-center justify-center gap-1.5 ${mobileSignRole === 'guru_piket' ? 'bg-indigo-500/20 border-indigo-500 text-indigo-300' : 'bg-slate-900 border-slate-700 text-slate-400'}`}>
+                    <i className="fa-solid fa-user-shield"></i> Guru Piket / Ortum
+                  </button>
+                </div>
+              </div>
+
+              <div>
+                <div className="flex justify-between items-center mb-1.5">
+                  <label className="text-xs font-bold text-slate-300">Bubuhkan Tanda Tangan Anda:</label>
+                  <button onClick={clearSignatureCanvas} className="text-[11px] text-rose-400 hover:underline"><i className="fa-solid fa-rotate-left mr-1"></i>Bersihkan</button>
+                </div>
+                <div className="bg-white rounded-2xl overflow-hidden border-2 border-indigo-500 shadow-inner">
+                  <canvas ref={canvasRef} width="360" height="180" className="w-full h-44 touch-none cursor-crosshair"></canvas>
+                </div>
+                <p className="text-[10px] text-slate-400 text-center mt-1">Gunakan ujung jari Anda di layar HP untuk membuat tanda tangan.</p>
+              </div>
+
+              <button onClick={handleSendSignatureFromMobile} disabled={isLoading} className="w-full py-3 bg-gradient-to-r from-emerald-500 to-teal-600 text-white font-bold text-sm rounded-2xl shadow-lg transition flex items-center justify-center gap-2 cursor-pointer">
+                {isLoading ? <i className="fa-solid fa-circle-notch fa-spin"></i> : <><i className="fa-solid fa-paper-plane"></i><span>Kirim Tanda Tangan ke Aplikasi Piket</span></>}
+              </button>
+            </div>
+          </div>
+        );
+      }
+
+      return (
+        <div className="min-h-screen flex flex-col">
+          
+          <header className="bg-indigo-700 text-white shadow-md no-print-element">
+            <div className="max-w-7xl mx-auto px-4 py-3 flex flex-wrap justify-between items-center gap-4">
+              <div className="flex items-center gap-3">
+                <div className="p-2 bg-indigo-800 rounded-xl"><i className="fa-solid fa-id-card-clip text-2xl text-amber-400"></i></div>
+                <div>
+                  <h1 className="font-extrabold text-xl tracking-tight">SI-PIKET SMAN 1 PARUNG</h1>
+                  <p className="text-xs text-indigo-200 flex items-center gap-1.5">
+                    <span>Sistem Informasi Guru Piket Sekolah</span>
+                    <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
+                  </p>
+                </div>
+              </div>
+
+              <div className="bg-indigo-900/90 border border-indigo-400/30 px-3.5 py-1.5 rounded-2xl flex items-center gap-3 text-white shadow-inner">
+                <div className="p-2 bg-amber-400/20 text-amber-300 rounded-xl text-center"><i className="fa-solid fa-clock text-base"></i></div>
+                <div>
+                  <div className="text-xs font-semibold text-indigo-100 flex items-center gap-1.5"><i className="fa-regular fa-calendar-days text-amber-300 text-[10px]"></i><span>{formattedLiveDate}</span></div>
+                  <div className="font-mono font-extrabold text-sm text-amber-300 tracking-wider">{formattedLiveTime} <span className="text-[10px] text-indigo-200 font-sans font-normal">WIB</span></div>
+                </div>
+              </div>
+
+              <div className="flex flex-wrap items-center gap-3">
+                <div className="flex items-center gap-2 bg-indigo-800/80 px-3 py-1.5 rounded-xl border border-indigo-500/30 text-xs">
+                  <i className="fa-solid fa-calendar-check text-amber-300"></i>
+                  <span className="text-indigo-200 text-[10px]">Filter Tanggal:</span>
+                  <input type="date" value={filterDate} onChange={(e) => setFilterDate(e.target.value)} className="bg-transparent font-semibold focus:outline-none cursor-pointer text-white"/>
+                </div>
+
+                <div className="flex items-center gap-2 bg-indigo-800/80 px-3 py-1.5 rounded-xl border border-indigo-500/30 text-xs">
+                  <i className="fa-solid fa-user-tie text-amber-300"></i>
+                  <div>
+                    <span className="block text-indigo-200 text-[10px]">Guru Piket Aktif:</span>
+                    {guruList.length > 0 ? (
+                      <select value={selectedGuru} onChange={(e) => setSelectedGuru(e.target.value)} className="bg-transparent font-semibold focus:outline-none cursor-pointer text-white">
+                        {guruList.map((g, idx) => (<option key={idx} value={g.nama} className="text-slate-800">{g.nama} ({g.hari})</option>))}
+                      </select>
+                    ) : (<span className="font-semibold text-white">Guru Piket</span>)}
+                  </div>
+                </div>
+              </div>
+            </div>
+          </header>
+
+          <nav className="bg-white border-b border-slate-200 shadow-sm no-print-element sticky top-0 z-30">
+            <div className="max-w-7xl mx-auto px-4 flex gap-2 overflow-x-auto">
+              <button onClick={() => setActiveTab('dashboard')} className={`py-3 px-4 font-semibold text-sm border-b-2 transition flex items-center gap-2 whitespace-nowrap ${activeTab === 'dashboard' ? 'border-indigo-600 text-indigo-600' : 'border-transparent text-slate-500 hover:text-slate-800'}`}><i className="fa-solid fa-chart-pie"></i> Dashboard</button>
+              <button onClick={() => setActiveTab('perizinan')} className={`py-3 px-4 font-semibold text-sm border-b-2 transition flex items-center gap-2 whitespace-nowrap ${activeTab === 'perizinan' ? 'border-indigo-600 text-indigo-600' : 'border-transparent text-slate-500 hover:text-slate-800'}`}>
+                <i className="fa-solid fa-ticket"></i> Perizinan
+                {stats.pendingPerms > 0 && <span className="bg-rose-500 text-white text-[10px] px-2 py-0.5 rounded-full font-bold">{stats.pendingPerms}</span>}
+              </button>
+              <button onClick={() => setActiveTab('absensi')} className={`py-3 px-4 font-semibold text-sm border-b-2 transition flex items-center gap-2 whitespace-nowrap ${activeTab === 'absensi' ? 'border-indigo-600 text-indigo-600' : 'border-transparent text-slate-500 hover:text-slate-800'}`}><i className="fa-solid fa-clipboard-user"></i> Rekap Harian</button>
+              <button onClick={() => setActiveTab('pesanOrtu')} className={`py-3 px-4 font-semibold text-sm border-b-2 transition flex items-center gap-2 whitespace-nowrap ${activeTab === 'pesanOrtu' ? 'border-indigo-600 text-indigo-600' : 'border-transparent text-slate-500 hover:text-slate-800'}`}>
+                <i className="fa-brands fa-whatsapp text-emerald-600"></i> Pesan Ortu
+                {notifOrtuList.length > 0 && <span className="bg-emerald-600 text-white text-[10px] px-2 py-0.5 rounded-full font-bold">{notifOrtuList.length}</span>}
+              </button>
+              <button onClick={() => setActiveTab('pengurus')} className={`py-3 px-4 font-semibold text-sm border-b-2 transition flex items-center gap-2 whitespace-nowrap ${activeTab === 'pengurus' ? 'border-indigo-600 text-indigo-600' : 'border-transparent text-slate-500 hover:text-slate-800'}`}>
+                <i className="fa-solid fa-bullhorn text-amber-500"></i> Tagih Absensi
+                {missingContacts.length > 0 && <span className="bg-amber-500 text-white text-[10px] px-2 py-0.5 rounded-full font-bold">{missingContacts.length}</span>}
+              </button>
+              <button onClick={() => setActiveTab('download')} className={`py-3 px-4 font-semibold text-sm border-b-2 transition flex items-center gap-2 whitespace-nowrap ${activeTab === 'download' ? 'border-indigo-600 text-indigo-600' : 'border-transparent text-slate-500 hover:text-slate-800'}`}>
+                <i className="fa-solid fa-file-pdf text-rose-500"></i> Download Rekap
+              </button>
+              <button onClick={() => setActiveTab('jurnal')} className={`py-3 px-4 font-semibold text-sm border-b-2 transition flex items-center gap-2 whitespace-nowrap ${activeTab === 'jurnal' ? 'border-indigo-600 text-indigo-600' : 'border-transparent text-slate-500 hover:text-slate-800'}`}><i className="fa-solid fa-book-journal-whills"></i> Jurnal Piket</button>
+            </div>
+          </nav>
+
+          <main className="max-w-7xl mx-auto px-4 py-6 flex-grow w-full no-print-element">
+            
+            {toastMsg && (
+              <div className="fixed bottom-5 right-5 bg-slate-900 text-white px-4 py-3 rounded-2xl shadow-2xl z-50 flex items-center gap-3 text-xs border border-slate-700 animate-bounce">
+                <i className="fa-solid fa-circle-check text-emerald-400 text-base"></i><span>{toastMsg}</span>
+              </div>
+            )}
+
+            {isLoading && (
+              <div className="mb-4 bg-amber-50 border border-amber-200 text-amber-800 px-4 py-2.5 rounded-xl text-xs flex items-center gap-2 animate-pulse">
+                <i className="fa-solid fa-spinner fa-spin text-amber-600"></i><span>Memproses & Menghubungkan ke Database...</span>
+              </div>
+            )}
+
+            {}
+            {activeTab === 'dashboard' && (
+              <div className="space-y-6">
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                  <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm flex items-center gap-3">
+                    <div className="p-3 bg-amber-50 text-amber-600 rounded-xl"><i className="fa-solid fa-clock text-xl"></i></div>
+                    <div><p className="text-xs text-slate-400 font-medium">Izin Menunggu</p><h3 className="text-2xl font-bold text-slate-800">{stats.pendingPerms}</h3></div>
+                  </div>
+                  <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm flex items-center gap-3">
+                    <div className="p-3 bg-emerald-50 text-emerald-600 rounded-xl"><i className="fa-solid fa-circle-check text-xl"></i></div>
+                    <div><p className="text-xs text-slate-400 font-medium">Izin Disetujui</p><h3 className="text-2xl font-bold text-slate-800">{stats.approvedPerms}</h3></div>
+                  </div>
+                  <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm flex items-center gap-3">
+                    <div className="p-3 bg-rose-50 text-rose-600 rounded-xl"><i className="fa-solid fa-user-xmark text-xl"></i></div>
+                    <div><p className="text-xs text-slate-400 font-medium">Siswa Alfa/Sakit</p><h3 className="text-2xl font-bold text-slate-800">{stats.totalAbsent + stats.totalSick}</h3></div>
+                  </div>
+                  <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm flex items-center gap-3">
+                    <div className="p-3 bg-indigo-50 text-indigo-600 rounded-xl"><i className="fa-solid fa-users text-xl"></i></div>
+                    <div><p className="text-xs text-slate-400 font-medium">Total Terlambat</p><h3 className="text-2xl font-bold text-slate-800">{stats.totalLate + stats.totalEarlyLeave}</h3></div>
+                  </div>
+                </div>
+
+                <div className="bg-gradient-to-r from-indigo-600 to-purple-600 rounded-2xl p-6 text-white shadow-lg flex flex-col md:flex-row justify-between items-center gap-4">
+                  <div>
+                    <h2 className="text-xl font-bold mb-1">Butuh Buat Slip Izin Siswa Baru?</h2>
+                    <p className="text-indigo-100 text-xs">Cari nama siswa atau input permohonan keluar/masuk/pulang sekolah secara cepat.</p>
+                  </div>
+                  <button onClick={() => { setActiveTab('perizinan'); setShowPermModal(true); }} className="px-5 py-3 bg-amber-400 hover:bg-amber-300 text-slate-900 font-bold rounded-xl text-sm shadow-md transition whitespace-nowrap flex items-center gap-2">
+                    <i className="fa-solid fa-plus"></i><span>Buat Slip Perizinan</span>
+                  </button>
+                </div>
+
+                <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+                  <div className="px-5 py-4 border-b border-slate-100 font-bold text-slate-800 flex justify-between items-center">
+                    <span>Aktivitas Perizinan Terbaru Hari Ini</span>
+                    <button onClick={() => setActiveTab('perizinan')} className="text-indigo-600 hover:underline text-xs">Lihat Semua &rarr;</button>
+                  </div>
+                  <div className="divide-y divide-slate-100">
+                    {permissions.length === 0 ? (
+                      <div className="p-8 text-center text-slate-400 text-xs">Belum ada perizinan siswa yang dicatat di Spreadsheet.</div>
+                    ) : (
+                      permissions.slice(0, 4).map((p, idx) => (
+                        <div key={idx} className="p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 hover:bg-slate-50">
+                          <div className="flex items-start gap-3">
+                            <div className="p-2 bg-indigo-50 text-indigo-600 rounded-xl mt-0.5"><i className="fa-solid fa-ticket"></i></div>
+                            <div>
+                              <div className="flex items-center gap-2"><span className="font-bold text-sm text-slate-800">{p.studentName}</span><span className="text-xs bg-slate-100 px-2 py-0.5 rounded-md font-semibold text-slate-600">{p.class}</span></div>
+                              <p className="text-xs text-slate-500 mt-1"><strong>{p.type}:</strong> {p.reason} ({p.time} WIB)</p>
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <button onClick={() => setPreviewPermModal(p)} className="px-3 py-1 bg-indigo-50 text-indigo-600 hover:bg-indigo-100 rounded-full text-xs font-bold transition flex items-center gap-1 cursor-pointer"><i className="fa-solid fa-file-signature"></i> Surat</button>
+                            <span className={`px-3 py-1 rounded-full text-xs font-bold ${p.status === 'Disetujui' ? 'bg-emerald-100 text-emerald-700' : p.status === 'Kembali' ? 'bg-blue-100 text-blue-700' : p.status === 'Ditolak' ? 'bg-rose-100 text-rose-700' : 'bg-amber-100 text-amber-700'}`}>{p.status}</span>
+                          </div>
+                        </div>
+                      ))
+                    )}
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {}
+            {activeTab === 'perizinan' && (
+              <div className="space-y-6">
+                <div className="flex flex-col sm:flex-row justify-between gap-3 bg-white p-4 rounded-2xl border border-slate-200 shadow-sm">
+                  <div className="relative flex-grow">
+                    <i className="fa-solid fa-magnifying-glass absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400"></i>
+                    <input type="text" placeholder="Cari nama siswa, kelas, atau nomor slip..." value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} className="w-full pl-10 pr-4 py-2 text-sm bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500" />
+                  </div>
+                  <button onClick={() => setShowPermModal(true)} className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-sm rounded-xl shadow-md transition flex items-center justify-center gap-2 whitespace-nowrap cursor-pointer"><i className="fa-solid fa-plus"></i> Buat Izin Baru</button>
+                </div>
+
+                <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-left border-collapse text-xs sm:text-sm">
+                      <thead>
+                        <tr className="bg-slate-50 text-slate-500 font-semibold border-b border-slate-200">
+                          <th className="p-3.5">No. Slip</th><th className="p-3.5">Siswa</th><th className="p-3.5">Jenis Izin</th><th className="p-3.5">Alasan</th><th className="p-3.5">Waktu</th><th className="p-3.5">Status & TTD</th><th className="p-3.5 text-right">Aksi & Barcode</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100">
+                        {filteredPermissions.length === 0 ? (
+                          <tr><td colSpan="7" className="p-8 text-center text-slate-400">Belum ada data perizinan di tanggal terpilih.</td></tr>
+                        ) : (
+                          filteredPermissions.map((p, idx) => (
+                            <tr key={idx} className="hover:bg-slate-50/80 transition">
+                              <td className="p-3.5 font-mono text-xs font-semibold text-slate-600">{p.slipNumber}</td>
+                              <td className="p-3.5"><span className="font-bold block text-slate-800">{p.studentName}</span><span className="text-xs text-slate-400">{p.class} ({p.nis})</span></td>
+                              <td className="p-3.5"><span className={`px-2.5 py-1 rounded-lg text-xs font-semibold ${p.type === 'Izin Keluar' ? 'bg-amber-50 text-amber-700' : p.type === 'Izin Pulang' ? 'bg-rose-50 text-rose-700' : 'bg-blue-50 text-blue-700'}`}>{p.type}</span></td>
+                              <td className="p-3.5 text-slate-600 max-w-xs truncate">{p.reason}</td>
+                              <td className="p-3.5 text-xs text-slate-500"><div>Keluar: {p.time} WIB</div>{p.timeIn !== '-' && <div>Kembali: {p.timeIn} WIB</div>}</td>
+                              <td className="p-3.5">
+                                <div className="flex flex-col gap-1">
+                                  <span className={`w-fit px-2.5 py-0.5 rounded-full text-[11px] font-bold ${p.status === 'Disetujui' ? 'bg-emerald-100 text-emerald-700' : p.status === 'Kembali' ? 'bg-blue-100 text-blue-700' : p.status === 'Ditolak' ? 'bg-rose-100 text-rose-700' : 'bg-amber-100 text-amber-700'}`}>{p.status}</span>
+                                  <div className="text-[10px] space-y-0.5"><span className={p.signatureMapel ? 'text-emerald-600 font-semibold block' : 'text-slate-400 block'}>• Mapel: {p.signatureMapel ? 'Sudah TTD' : 'Belum'}</span><span className={p.signature ? 'text-emerald-600 font-semibold block' : 'text-slate-400 block'}>• Piket: {p.signature ? 'Sudah TTD' : 'Belum'}</span></div>
+                                </div>
+                              </td>
+                              <td className="p-3.5 text-right space-x-1.5">
+                                <button onClick={() => setPreviewPermModal(p)} className="px-2.5 py-1.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-600 rounded-xl text-xs font-bold transition flex items-center gap-1.5 inline-flex cursor-pointer" title="Lihat Surat"><i className="fa-solid fa-qrcode text-sm"></i><span>Surat</span></button>
+                                {p.status === 'Menunggu' && (
+                                  <><button onClick={() => handleApprovePermission(p.id)} className="p-1.5 bg-emerald-50 text-emerald-600 hover:bg-emerald-100 rounded-lg text-xs font-bold cursor-pointer"><i className="fa-solid fa-check"></i></button><button onClick={() => handleRejectPermission(p.id)} className="p-1.5 bg-rose-50 text-rose-600 hover:bg-rose-100 rounded-lg text-xs font-bold cursor-pointer"><i className="fa-solid fa-xmark"></i></button></>
+                                )}
+                                {p.status === 'Disetujui' && p.type === 'Izin Keluar' && (<button onClick={() => handleReturnStudent(p.slipNumber)} className="px-2 py-1 bg-blue-50 text-blue-600 hover:bg-blue-100 rounded-lg text-xs font-semibold cursor-pointer"><i className="fa-solid fa-right-to-bracket mr-1"></i> Kembali</button>)}
+                                <button onClick={() => triggerPrintSlip(p)} className="p-1.5 bg-slate-100 text-slate-600 hover:bg-indigo-50 hover:text-indigo-600 rounded-lg text-xs font-bold cursor-pointer"><i className="fa-solid fa-print"></i></button>
+                              </td>
+                            </tr>
+                          ))
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {}
+            {activeTab === 'absensi' && (
+              <div className="space-y-6">
+                <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm flex flex-col md:flex-row justify-between items-center gap-4">
+                  <div><h2 className="text-base font-bold text-slate-800">Rekap Harian - Tanggal: {filterDate}</h2><p className="text-xs text-slate-500">Klik 'Detail' untuk melihat atau menambah catatan persiswa.</p></div>
+                  <div className="flex items-center gap-3"><span className="text-xs font-semibold text-slate-600 bg-slate-100 px-3 py-1.5 rounded-xl"><i className="fa-solid fa-calendar-day text-indigo-600 mr-1.5"></i>{filterDate}</span></div>
+                </div>
+
+                <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
+                  <div className="bg-emerald-50 border border-emerald-200 p-3.5 rounded-2xl text-center"><span className="block text-emerald-800 font-extrabold text-xl">{stats.totalPresent}</span><span className="text-[11px] font-semibold text-emerald-700">Total Hadir</span></div>
+                  <div className="bg-rose-50 border border-rose-200 p-3.5 rounded-2xl text-center"><span className="block text-rose-800 font-extrabold text-xl">{stats.totalAbsent}</span><span className="text-[11px] font-semibold text-rose-700">Total Alfa</span></div>
+                  <div className="bg-amber-50 border border-amber-200 p-3.5 rounded-2xl text-center"><span className="block text-amber-800 font-extrabold text-xl">{stats.totalSick}</span><span className="text-[11px] font-semibold text-amber-700">Total Sakit</span></div>
+                  <div className="bg-blue-50 border border-blue-200 p-3.5 rounded-2xl text-center"><span className="block text-blue-800 font-extrabold text-xl">{stats.totalLeave}</span><span className="text-[11px] font-semibold text-blue-700">Total Izin</span></div>
+                  <div className="bg-purple-50 border border-purple-200 p-3.5 rounded-2xl text-center"><span className="block text-purple-800 font-extrabold text-xl">{stats.totalLate}</span><span className="text-[11px] font-semibold text-purple-700">Terlambat</span></div>
+                  <div className="bg-orange-50 border border-orange-200 p-3.5 rounded-2xl text-center"><span className="block text-orange-800 font-extrabold text-xl">{stats.totalEarlyLeave}</span><span className="text-[11px] font-semibold text-orange-700">Plg Cepat</span></div>
+                </div>
+
+                {classes.length === 0 ? (
+                  <div className="bg-white p-8 rounded-2xl border border-slate-200 text-center text-slate-400 text-xs space-y-2"><i className="fa-solid fa-folder-open text-2xl text-slate-300"></i><p>Tidak ada data absensi kelas pada tanggal ini.</p></div>
+                ) : (
+                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                    {classes.map((c, idx) => (
+                      <div key={idx} className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm space-y-4">
+                        <div className="flex justify-between items-center border-b border-slate-100 pb-3">
+                          <div><h3 className="font-bold text-slate-800 text-base">{c.name}</h3><p className="text-[11px] text-slate-400">{c.students ? c.students.length : 0} siswa tercatat</p></div>
+                          <span className="text-xs bg-indigo-50 text-indigo-600 px-2.5 py-1 rounded-lg font-bold">{c.total || 0} Record</span>
+                        </div>
+                        <div className="grid grid-cols-3 gap-2 text-center text-xs">
+                          <div className="bg-emerald-50/70 p-2 rounded-xl text-emerald-700"><span className="block font-bold text-sm">{c.present || 0}</span><span className="text-[10px]">Hadir</span></div>
+                          <div className="bg-amber-50/70 p-2 rounded-xl text-amber-700"><span className="block font-bold text-sm">{c.sick || 0}</span><span className="text-[10px]">Sakit</span></div>
+                          <div className="bg-blue-50/70 p-2 rounded-xl text-blue-700"><span className="block font-bold text-sm">{c.leave || 0}</span><span className="text-[10px]">Izin</span></div>
+                          <div className="bg-rose-50/70 p-2 rounded-xl text-rose-700"><span className="block font-bold text-sm">{c.absent || 0}</span><span className="text-[10px]">Alfa</span></div>
+                          <div className="bg-purple-50/70 p-2 rounded-xl text-purple-700"><span className="block font-bold text-sm">{c.late || 0}</span><span className="text-[10px]">Lambat</span></div>
+                          <div className="bg-orange-50/70 p-2 rounded-xl text-orange-700"><span className="block font-bold text-sm">{c.earlyLeave || 0}</span><span className="text-[10px]">Plg Cepat</span></div>
+                        </div>
+                        <button onClick={() => setSelectedClassDetail(c)} className="w-full py-2 bg-slate-50 hover:bg-indigo-50 hover:text-indigo-600 text-slate-600 font-bold text-xs rounded-xl border border-slate-200 transition"><i className="fa-solid fa-list-ul"></i> Detail Rincian</button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {}
+            {activeTab === 'pesanOrtu' && (
+              <div className="space-y-6">
+                <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+                  <div>
+                    <h2 className="text-base font-bold text-slate-800 flex items-center gap-2"><i className="fa-brands fa-whatsapp text-emerald-600 text-xl"></i><span>Pesan Notifikasi Absensi Ortu</span></h2>
+                    <p className="text-xs text-slate-500 mt-0.5">Daftar siswa bermasalah kehadiran tanggal <strong>{filterDate}</strong>.</p>
+                  </div>
+                  <div className="flex flex-wrap items-center gap-2 text-xs">
+                    <div className="flex items-center gap-2 bg-slate-50 p-2 rounded-xl border border-slate-200">
+                      <span className="text-slate-500 font-semibold">Filter Kelas:</span>
+                      <select value={selectedKelasNotif} onChange={(e) => setSelectedKelasNotif(e.target.value)} className="bg-white border rounded-lg px-2.5 py-1 font-bold text-slate-700 focus:outline-none">
+                        <option value="Semua">Semua Kelas</option>
+                        {classes.map((cls, idx) => (<option key={idx} value={cls.name}>{cls.name}</option>))}
+                      </select>
+                    </div>
+                    <button onClick={handleSendAllPesanOrtu} disabled={filteredNotifOrtu.filter(item => item.waUrl && item.waUrl !== "#").length === 0} className="bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2.5 rounded-xl font-bold flex items-center gap-2 shadow-md disabled:opacity-50 cursor-pointer">
+                      <i className="fa-brands fa-whatsapp text-sm"></i> Kirim Semua WA
+                    </button>
+                  </div>
+                </div>
+
+                <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-left border-collapse text-xs sm:text-sm">
+                      <thead>
+                        <tr className="bg-slate-50 text-slate-500 font-semibold border-b border-slate-200">
+                          <th className="p-3.5">NISN</th><th className="p-3.5">Nama Siswa</th><th className="p-3.5">Kelas</th><th className="p-3.5">Status</th><th className="p-3.5">Catatan</th><th className="p-3.5">No HP Ortu</th><th className="p-3.5 text-right">Aksi</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100">
+                        {filteredNotifOrtu.length === 0 ? (
+                          <tr><td colSpan="7" className="p-10 text-center text-slate-400">Tidak ada laporan ketidakhadiran siswa.</td></tr>
+                        ) : (
+                          filteredNotifOrtu.map((item, idx) => (
+                            <tr key={idx} className="hover:bg-slate-50/80 transition">
+                              <td className="p-3.5 font-mono text-slate-500">{item.nisn}</td>
+                              <td className="p-3.5 font-bold text-slate-800">{item.name}</td>
+                              <td className="p-3.5"><span className="px-2.5 py-1 bg-slate-100 rounded-md font-semibold text-slate-600 text-xs">{item.kelas}</span></td>
+                              <td className="p-3.5"><span className={`px-2.5 py-1 rounded-lg text-xs font-extrabold ${item.status.includes('SAKIT') ? 'bg-amber-100 text-amber-800' : item.status.includes('IZIN') || item.status.includes('IJIN') ? 'bg-blue-100 text-blue-800' : item.status.includes('ALFA') || item.status.includes('ALPHA') ? 'bg-rose-100 text-rose-800' : 'bg-purple-100 text-purple-800'}`}>{item.status}</span></td>
+                              <td className="p-3.5 text-slate-600 max-w-xs truncate">{item.notes}</td>
+                              <td className="p-3.5 font-mono text-xs">{item.noHpOrtu && item.noHpOrtu !== '-' ? <span className="text-slate-700 font-semibold">{item.noHpOrtu}</span> : <span className="text-rose-500 font-medium italic text-[11px]">Tidak Ada</span>}</td>
+                              <td className="p-3.5 text-right"><button onClick={() => handleSendPesanOrtu(item)} disabled={!item.waUrl || item.waUrl === "#"} className={`px-3 py-1.5 rounded-xl text-xs font-bold transition flex items-center justify-center gap-1.5 inline-flex ${item.waUrl && item.waUrl !== "#" ? 'bg-emerald-600 hover:bg-emerald-700 text-white cursor-pointer' : 'bg-slate-200 text-slate-400 cursor-not-allowed'}`}><i className="fa-brands fa-whatsapp text-sm"></i> Kirim</button></td>
+                            </tr>
+                          ))
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {}
+            {activeTab === 'pengurus' && (
+              <div className="space-y-6">
+                <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+                  <div>
+                    <h2 className="text-base font-bold text-slate-800 flex items-center gap-2"><i className="fa-solid fa-bullhorn text-amber-500 text-xl"></i><span>Tagih Laporan Absensi</span></h2>
+                    <p className="text-xs text-slate-500 mt-0.5">Daftar kelas yang <strong>belum</strong> menyerahkan rekapan absensi tanggal <strong>{filterDate}</strong>.</p>
+                  </div>
+                  <div className="flex flex-wrap items-center gap-2 text-xs">
+                    <button onClick={handleSendAllPesanPengurus} disabled={missingContacts.filter(item => item.waUrl && item.waUrl !== "#").length === 0} className="bg-amber-500 hover:bg-amber-600 text-white px-4 py-2.5 rounded-xl font-bold flex items-center gap-2 shadow-md disabled:opacity-50 cursor-pointer">
+                      <i className="fa-brands fa-whatsapp text-sm"></i> Broadcast Tagihan WA
+                    </button>
+                  </div>
+                </div>
+
+                <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-left border-collapse text-xs sm:text-sm">
+                      <thead>
+                        <tr className="bg-slate-50 text-slate-500 font-semibold border-b border-slate-200">
+                          <th className="p-3.5">Nama Pengurus</th><th className="p-3.5">Jabatan</th><th className="p-3.5">Kelas</th><th className="p-3.5">No HP / WhatsApp</th><th className="p-3.5 text-right">Aksi WhatsApp</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100">
+                        {missingContacts.length === 0 ? (
+                          <tr><td colSpan="5" className="p-10 text-center text-slate-400">Semua kelas sudah mengumpulkan absen hari ini.</td></tr>
+                        ) : (
+                          missingContacts.map((item, idx) => (
+                            <tr key={idx} className="hover:bg-slate-50/80 transition">
+                              <td className="p-3.5 font-bold text-slate-800">{item.name}</td>
+                              <td className="p-3.5"><span className={`px-2.5 py-1 rounded-md font-semibold text-xs ${item.role.toLowerCase().includes('ketua') ? 'bg-indigo-100 text-indigo-700' : 'bg-blue-100 text-blue-700'}`}>{item.role}</span></td>
+                              <td className="p-3.5"><span className="px-2.5 py-1 bg-slate-100 border border-slate-200 rounded-md font-extrabold text-slate-700 text-xs">{item.kelas}</span></td>
+                              <td className="p-3.5 font-mono text-xs">{item.phone && item.phone !== '-' ? <span className="text-slate-700 font-semibold">{item.phone}</span> : <span className="text-rose-500 font-medium italic text-[11px]">Belum Ada Nomor</span>}</td>
+                              <td className="p-3.5 text-right"><button onClick={() => window.open(item.waUrl, '_blank')} disabled={!item.waUrl || item.waUrl === "#"} className={`px-3 py-1.5 rounded-xl text-xs font-bold transition flex items-center justify-center gap-1.5 inline-flex ${item.waUrl && item.waUrl !== "#" ? 'bg-amber-500 hover:bg-amber-600 text-white cursor-pointer' : 'bg-slate-200 text-slate-400 cursor-not-allowed'}`}><i className="fa-brands fa-whatsapp text-sm"></i> Tagih Absen</button></td>
+                            </tr>
+                          ))
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {}
+            {activeTab === 'download' && (
+              <div className="space-y-6">
+                <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm space-y-5">
+                  <div>
+                    <h2 className="text-base font-bold text-slate-800 flex items-center gap-2"><i className="fa-solid fa-file-pdf text-rose-500 text-xl"></i><span>Download PDF Rekap Absensi</span></h2>
+                    <p className="text-xs text-slate-500 mt-0.5">Tarik data agregat absensi seluruh siswa dalam rentang mingguan atau bulanan.</p>
+                  </div>
+
+                  <div className="flex flex-col sm:flex-row gap-4 flex-wrap">
+                    <div className="space-y-1.5">
+                      <label className="text-[11px] font-bold text-slate-600">Pilih Tipe Laporan:</label>
+                      <select value={rekapMode} onChange={e => setRekapMode(e.target.value)} className="w-full sm:w-auto block bg-slate-50 border border-slate-200 text-sm font-semibold text-slate-700 px-3 py-2 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500">
+                        <option value="mingguan">Mingguan (Senin - Jumat)</option>
+                        <option value="bulanan">Bulanan (Satu Bulan Penuh)</option>
+                      </select>
+                    </div>
+
+                    {rekapMode === 'mingguan' ? (
+                      <div className="space-y-1.5">
+                        <label className="text-[11px] font-bold text-slate-600">Pilih Tanggal Acuan:</label>
+                        <input type="date" value={rekapInputDate} onChange={e => setRekapInputDate(e.target.value)} className="w-full sm:w-auto block bg-slate-50 border border-slate-200 text-sm font-semibold text-slate-700 px-3 py-2 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500"/>
+                      </div>
+                    ) : (
+                      <div className="space-y-1.5">
+                        <label className="text-[11px] font-bold text-slate-600">Pilih Bulan & Tahun:</label>
+                        <input type="month" value={rekapInputMonth} onChange={e => setRekapInputMonth(e.target.value)} className="w-full sm:w-auto block bg-slate-50 border border-slate-200 text-sm font-semibold text-slate-700 px-3 py-2 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500"/>
+                      </div>
+                    )}
+
+                    <div className="space-y-1.5">
+                      <label className="text-[11px] font-bold text-slate-600">Pilih Kelas:</label>
+                      <select value={rekapSelectedClass} onChange={e => setRekapSelectedClass(e.target.value)} className="w-full sm:w-auto block bg-slate-50 border border-slate-200 text-sm font-semibold text-slate-700 px-3 py-2 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500">
+                        <option value="Semua">Semua Kelas</option>
+                        {uniqueClasses.map((cls, idx) => (
+                          <option key={idx} value={cls}>{cls}</option>
+                        ))}
+                      </select>
+                    </div>
+
+                    <div className="flex items-end gap-2 mt-2 sm:mt-0">
+                      <button onClick={handleFetchRekapData} disabled={isFetchingRekap} className="px-5 py-2 bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-sm rounded-xl shadow-md transition flex items-center justify-center gap-2 h-10 disabled:opacity-50 cursor-pointer">
+                        {isFetchingRekap ? <i className="fa-solid fa-circle-notch fa-spin"></i> : <i className="fa-solid fa-cloud-arrow-down"></i>}
+                        Tampilkan Data
+                      </button>
+                      {rekapData.length > 0 && (
+                        <button onClick={handleDownloadPDF} className="px-5 py-2 bg-rose-600 hover:bg-rose-700 text-white font-bold text-sm rounded-xl shadow-md transition flex items-center justify-center gap-2 h-10 cursor-pointer">
+                          <i className="fa-solid fa-file-pdf"></i> Download PDF
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                  
+                  {rekapInfoText && <div className="text-xs font-semibold text-indigo-600 bg-indigo-50 p-2.5 rounded-lg border border-indigo-100">{rekapInfoText}</div>}
+                </div>
+
+                <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+                  <div className="px-4 py-3 bg-slate-50 border-b border-slate-200 font-bold text-sm text-slate-700 flex justify-between">
+                    <span>Pratinjau Data Tarikan</span>
+                    <span className="text-xs bg-slate-200 px-2 py-0.5 rounded-md">{rekapData.length} baris data</span>
+                  </div>
+                  <div className="overflow-x-auto max-h-[500px] overflow-y-auto">
+                    <table className="w-full text-left border-collapse text-xs">
+                      <thead className="sticky top-0 bg-slate-100 shadow-sm z-10">
+                        <tr className="text-slate-600 font-bold border-b border-slate-200">
+                          <th className="p-3">Kelas</th>
+                          <th className="p-3">NIS</th>
+                          <th className="p-3">Nama Siswa</th>
+                          <th className="p-3 text-center text-emerald-700">Hadir</th>
+                          <th className="p-3 text-center text-amber-700">Sakit</th>
+                          <th className="p-3 text-center text-blue-700">Izin</th>
+                          <th className="p-3 text-center text-rose-700">Alfa</th>
+                          <th className="p-3 text-center text-cyan-700">Dispen</th>
+                          <th className="p-3 text-center text-purple-700">Lambat</th>
+                          <th className="p-3 text-center text-orange-700">Plg Cepat</th>
+                          <th className="p-3 text-center text-slate-700">% Hadir</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100">
+                        {rekapData.length === 0 ? (
+                          <tr><td colSpan="11" className="p-10 text-center text-slate-400">Silakan tekan "Tampilkan Data" untuk memuat rekapitulasi.</td></tr>
+                        ) : (
+                          rekapData.map((row, idx) => (
+                            <tr key={idx} className="hover:bg-slate-50">
+                              <td className="p-3 font-bold text-slate-700 whitespace-nowrap">{row.kelas}</td>
+                              <td className="p-3 font-mono text-slate-500 whitespace-nowrap">{row.nis}</td>
+                              <td className="p-3 font-semibold text-slate-800 whitespace-nowrap">{row.nama}</td>
+                              <td className="p-3 text-center font-bold text-emerald-600 bg-emerald-50/30">{row.hadir}</td>
+                              <td className="p-3 text-center font-bold text-amber-600 bg-amber-50/30">{row.sakit}</td>
+                              <td className="p-3 text-center font-bold text-blue-600 bg-blue-50/30">{row.izin}</td>
+                              <td className="p-3 text-center font-bold text-rose-600 bg-rose-50/30">{row.alfa}</td>
+                              <td className="p-3 text-center font-bold text-cyan-600 bg-cyan-50/30">{row.dispen}</td>
+                              <td className="p-3 text-center font-bold text-purple-600 bg-purple-50/30">{row.terlambat}</td>
+                              <td className="p-3 text-center font-bold text-orange-600 bg-orange-50/30">{row.pulang_cepat}</td>
+                              <td className="p-3 text-center font-bold text-slate-700 bg-slate-100">{row.persentase}</td>
+                            </tr>
+                          ))
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {}
+            {activeTab === 'jurnal' && (
+              <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm h-fit">
+                  <h3 className="text-base font-bold text-slate-800 mb-4 flex items-center gap-2"><i className="fa-solid fa-pen-to-square text-indigo-600"></i>Input Jurnal Kejadian</h3>
+                  <form onSubmit={handleAddJournal} className="space-y-4">
+                    <div>
+                      <label className="block text-xs font-semibold text-slate-600 mb-1">Kategori Laporan</label>
+                      <select value={newJournal.category} onChange={(e) => setNewJournal({ ...newJournal, category: e.target.value })} className="w-full px-3 py-2 text-sm border border-slate-200 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:outline-none bg-slate-50">
+                        <option value="Umum">Umum / Rutin</option><option value="KBM">Kegiatan Belajar Mengajar</option><option value="Guru Berhalangan">Guru Berhalangan Hadir</option><option value="Ketertiban">Ketertiban & Kedisiplinan</option><option value="Fasilitas">Kerusakan Fasilitas</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label className="block text-xs font-semibold text-slate-600 mb-1">Catatan Kejadian / Laporan</label>
+                      <textarea required rows="4" placeholder="Tuliskan catatan kejadian..." value={newJournal.content} onChange={(e) => setNewJournal({ ...newJournal, content: e.target.value })} className="w-full px-3 py-2 text-sm border border-slate-200 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:outline-none bg-slate-50"></textarea>
+                    </div>
+                    <button type="submit" className="w-full py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs rounded-xl shadow-md transition flex items-center justify-center gap-2 cursor-pointer">
+                      <i className="fa-solid fa-paper-plane"></i> Simpan Catatan
+                    </button>
+                  </form>
+                </div>
+                <div className="lg:col-span-2 space-y-4">
+                  <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm font-bold text-slate-800">Riwayat Log Kegiatan Guru Piket</div>
+                  <div className="space-y-3">
+                    {journals.length === 0 ? (
+                      <div className="bg-white p-8 rounded-2xl text-center text-slate-400 border border-slate-200 text-xs">Belum ada catatan jurnal harian.</div>
+                    ) : (
+                      journals.map((j, idx) => (
+                        <div key={idx} className="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm flex items-start gap-3">
+                          <div className="p-2 bg-indigo-50 text-indigo-600 rounded-xl font-mono text-xs font-bold whitespace-nowrap">{j.time} WIB</div>
+                          <div className="flex-grow">
+                            <div className="flex justify-between items-center mb-1">
+                              <span className="text-xs font-bold bg-slate-100 text-slate-700 px-2 py-0.5 rounded-md">{j.category}</span>
+                              <span className="text-[11px] text-slate-400"><i className="fa-solid fa-user-pen mr-1"></i>{j.piketTeacher} ({j.date})</span>
+                            </div>
+                            <p className="text-sm text-slate-700 leading-relaxed">{j.content}</p>
+                          </div>
+                        </div>
+                      ))
+                    )}
+                  </div>
+                </div>
+              </div>
+            )}
+          </main>
+
+          {}
+          {/* MODALS */}
+          {showPermModal && (
+            <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4 no-print-element">
+              <div className="bg-white rounded-3xl max-w-md w-full p-6 shadow-2xl space-y-4 relative border border-slate-200">
+                <div className="flex justify-between items-center border-b border-slate-100 pb-3">
+                  <h3 className="font-bold text-slate-800 text-base flex items-center gap-2">
+                    <i className="fa-solid fa-ticket text-indigo-600"></i> Buat Slip Perizinan Siswa
+                  </h3>
+                  <button onClick={() => setShowPermModal(false)} className="text-slate-400 hover:text-slate-600 cursor-pointer">
+                    <i className="fa-solid fa-xmark text-lg"></i>
+                  </button>
+                </div>
+                
+                <form onSubmit={handleAddPermission} className="space-y-4">
+                  <div className="relative">
+                    <label className="block text-xs font-semibold text-slate-600 mb-1">Cari Nama Siswa / NIS</label>
+                    <input type="text" required placeholder="Ketik nama siswa..." value={siswaSearchInput} onChange={(e) => handleSiswaSearchChange(e.target.value)} className="w-full px-3 py-2 text-sm border border-slate-200 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:outline-none" />
+                    {filteredSiswaSuggestions.length > 0 && (
+                      <div className="absolute left-0 right-0 top-full mt-1 bg-white border border-slate-200 rounded-xl shadow-lg z-20 overflow-hidden divide-y divide-slate-100">
+                        {filteredSiswaSuggestions.map((s, i) => (
+                          <div key={i} onClick={() => selectSiswaSuggestion(s)} className="p-2.5 hover:bg-indigo-50 cursor-pointer text-xs">
+                            <div className="font-bold text-slate-800">{s.nama}</div>
+                            <div className="text-slate-400">{s.kelas} | NIS: {s.nis}</div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                  
+                  <div className="flex items-center gap-2 mt-2">
+                    <input type="checkbox" id="newStudentCheck" checked={isNewStudentMode} onChange={(e) => setIsNewStudentMode(e.target.checked)} className="rounded text-indigo-600 focus:ring-indigo-500 cursor-pointer"/>
+                    <label htmlFor="newStudentCheck" className="text-xs font-semibold text-slate-600 cursor-pointer">Siswa belum terdaftar (Input Manual)</label>
+                  </div>
+
+                  {isNewStudentMode && (
+                    <div className="grid grid-cols-2 gap-3 p-3 bg-indigo-50 rounded-xl border border-indigo-100">
+                      <div>
+                        <label className="block text-[10px] font-bold text-indigo-900 mb-1">NIS (Opsional)</label>
+                        <input type="text" placeholder="NIS Siswa..." value={newPermission.nis} onChange={(e) => setNewPermission({...newPermission, nis: e.target.value})} className="w-full px-2 py-1.5 text-xs border border-indigo-200 rounded-lg focus:outline-none"/>
+                      </div>
+                      <div>
+                        <label className="block text-[10px] font-bold text-indigo-900 mb-1">Nama Lengkap</label>
+                        <input type="text" required placeholder="Nama Siswa..." value={newPermission.studentName} onChange={(e) => setNewPermission({...newPermission, studentName: e.target.value})} className="w-full px-2 py-1.5 text-xs border border-indigo-200 rounded-lg focus:outline-none"/>
+                      </div>
+                      <div>
+                        <label className="block text-[10px] font-bold text-indigo-900 mb-1">Jenis Kelamin</label>
+                        <select value={newPermission.gender} onChange={(e) => setNewPermission({...newPermission, gender: e.target.value})} className="w-full px-2 py-1.5 text-xs border border-indigo-200 rounded-lg focus:outline-none bg-white">
+                          <option value="Laki-laki">Laki-laki</option>
+                          <option value="Perempuan">Perempuan</option>
+                        </select>
+                      </div>
+                      <div>
+                        <label className="block text-[10px] font-bold text-indigo-900 mb-1">No. HP Orang Tua</label>
+                        <input type="text" placeholder="Contoh: 0812..." value={newPermission.noHpOrtu} onChange={(e) => setNewPermission({...newPermission, noHpOrtu: e.target.value})} className="w-full px-2 py-1.5 text-xs border border-indigo-200 rounded-lg focus:outline-none"/>
+                      </div>
+                    </div>
+                  )}
+
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-xs font-semibold text-slate-600 mb-1">Kelas</label>
+                      <input type="text" required placeholder="Contoh: X-A" value={newPermission.class} onChange={(e) => setNewPermission({ ...newPermission, class: e.target.value })} className="w-full px-3 py-2 text-sm border border-slate-200 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:outline-none" />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-semibold text-slate-600 mb-1">Guru Mapel (Saat Izin)</label>
+                      <input type="text" placeholder="Dra. Endang S." value={newPermission.mapelTeacher} onChange={(e) => setNewPermission({ ...newPermission, mapelTeacher: e.target.value })} className="w-full px-3 py-2 text-sm border border-slate-200 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:outline-none" />
+                    </div>
+                  </div>
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-600 mb-1">Jenis Perizinan</label>
+                    <select value={newPermission.type} onChange={(e) => setNewPermission({ ...newPermission, type: e.target.value })} className="w-full px-3 py-2 text-sm border border-slate-200 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:outline-none bg-white">
+                      <option value="Izin Pulang">Izin Pulang</option>
+                      <option value="Izin Keluar">Izin Keluar Sementara</option>
+                      <option value="Izin Masuk">Izin Masuk / Terlambat</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-600 mb-1">Alasan Izin</label>
+                    <textarea required rows="3" placeholder="Jelaskan alasan izin..." value={newPermission.reason} onChange={(e) => setNewPermission({ ...newPermission, reason: e.target.value })} className="w-full px-3 py-2 text-sm border border-slate-200 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:outline-none"></textarea>
+                  </div>
+                  <div className="flex gap-3 pt-2">
+                    <button type="button" onClick={() => setShowPermModal(false)} className="w-1/2 py-2.5 text-xs font-bold text-slate-600 bg-slate-100 hover:bg-slate-200 rounded-xl cursor-pointer transition">Batal</button>
+                    <button type="submit" className="w-1/2 py-2.5 text-xs font-bold text-white bg-indigo-600 hover:bg-indigo-700 rounded-xl shadow-md cursor-pointer transition">Simpan & Terbitkan</button>
+                  </div>
+                </form>
+              </div>
+            </div>
+          )}
+
+          {selectedClassDetail && (
+            <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4 overflow-y-auto no-print-element">
+              <div className="bg-white rounded-3xl max-w-2xl w-full p-6 shadow-2xl space-y-5 relative border border-slate-200 my-8">
+                <div className="flex justify-between items-center border-b border-slate-100 pb-3">
+                  <div className="flex items-center gap-2">
+                    <span className="p-2 bg-indigo-50 text-indigo-600 rounded-xl text-sm"><i className="fa-solid fa-users"></i></span>
+                    <div><h3 className="font-extrabold text-slate-800 text-base">Detail Absensi {selectedClassDetail.name}</h3><p className="text-xs text-slate-400">{selectedClassDetail.date}</p></div>
+                  </div>
+                  <button onClick={() => setSelectedClassDetail(null)} className="text-slate-400 hover:text-slate-600 p-1 cursor-pointer"><i className="fa-solid fa-xmark text-xl"></i></button>
+                </div>
+
+                <form onSubmit={handleAddStudentAttendanceToClass} className="bg-slate-50 p-3.5 rounded-2xl border border-slate-200/80 space-y-3">
+                  <span className="block text-xs font-bold text-slate-700">Tambah Catatan Siswa:</span>
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                    <input type="text" required placeholder="Nama Siswa..." value={newStudentAttendance.name} onChange={(e) => setNewStudentAttendance({ ...newStudentAttendance, name: e.target.value })} className="px-3 py-1.5 text-xs border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-white" />
+                    <select value={newStudentAttendance.status} onChange={(e) => setNewStudentAttendance({ ...newStudentAttendance, status: e.target.value })} className="px-3 py-1.5 text-xs border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-white font-semibold">
+                      <option value="Hadir">Hadir</option><option value="Terlambat">Terlambat</option><option value="Sakit">Sakit</option><option value="Izin">Izin</option><option value="Alfa">Alfa</option><option value="Dispen">Dispen</option><option value="Pulang Cepat">Pulang Cepat</option>
+                    </select>
+                    <input type="text" placeholder="Keterangan..." value={newStudentAttendance.notes} onChange={(e) => setNewStudentAttendance({ ...newStudentAttendance, notes: e.target.value })} className="px-3 py-1.5 text-xs border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-white" />
+                  </div>
+                  <button type="submit" className="w-full py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs rounded-xl transition flex items-center justify-center gap-1.5 cursor-pointer"><i className="fa-solid fa-plus text-xs"></i> Tambah Catatan</button>
+                </form>
+
+                <div className="border border-slate-200 rounded-2xl overflow-hidden max-h-64 overflow-y-auto">
+                  <table className="w-full text-left text-xs">
+                    <thead><tr className="bg-slate-100 text-slate-600 font-bold border-b border-slate-200"><th className="p-3">NISN</th><th className="p-3">Nama</th><th className="p-3">Status</th><th className="p-3">Catatan</th></tr></thead>
+                    <tbody className="divide-y divide-slate-100">
+                      {(!selectedClassDetail.students || selectedClassDetail.students.length === 0) ? (
+                        <tr><td colSpan="4" className="p-6 text-center text-slate-400">Belum ada catatan.</td></tr>
+                      ) : (
+                        selectedClassDetail.students.map((st, i) => (
+                          <tr key={i} className="hover:bg-slate-50">
+                            <td className="p-3 font-mono text-slate-500">{st.nisn || st.nis || '-'}</td><td className="p-3 font-bold text-slate-800">{st.name || st.nama}</td>
+                            <td className="p-3"><span className={`px-2.5 py-1 rounded-lg text-[10px] font-bold ${st.status.includes('Hadir') ? 'bg-emerald-100 text-emerald-800' : st.status.includes('Sakit') ? 'bg-amber-100 text-amber-800' : st.status.includes('Izin') || st.status.includes('Ijin') ? 'bg-blue-100 text-blue-800' : st.status.includes('Alfa') || st.status.includes('Alpha') || st.status.includes('Alpa') ? 'bg-rose-100 text-rose-800' : st.status.includes('Terlambat') ? 'bg-purple-100 text-purple-800' : st.status.includes('Dispen') ? 'bg-cyan-100 text-cyan-800' : 'bg-orange-100 text-orange-800'}`}>{ (st.status.includes('Alpha') || st.status.includes('Alpa')) ? 'Alfa' : st.status }</span></td>
+                            <td className="p-3 text-slate-600">{st.notes || st.reason || '-'}</td>
+                          </tr>
+                        ))
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+                <div className="flex justify-end pt-2"><button onClick={() => setSelectedClassDetail(null)} className="px-5 py-2 bg-slate-100 hover:bg-slate-200 text-slate-600 font-bold text-xs rounded-xl cursor-pointer">Tutup</button></div>
+              </div>
+            </div>
+          )}
+
+          {directSignTarget && (
+            <div className="fixed inset-0 bg-slate-950/70 backdrop-blur-md z-50 flex items-center justify-center p-4 no-print-element">
+              <div className="bg-white rounded-3xl max-w-md w-full p-6 shadow-2xl space-y-4 border border-slate-100 relative animate-in fade-in zoom-in duration-200">
+                <div className="flex justify-between items-center border-b border-slate-100 pb-3">
+                  <h3 className="font-bold text-slate-800 text-base flex items-center gap-2">
+                    <i className="fa-solid fa-signature text-amber-500"></i>
+                    <span>Tanda Tangan {directSignTarget.role === 'guru_mapel' ? 'Guru Mapel' : 'Guru Piket'}</span>
+                  </h3>
+                  <button onClick={() => setDirectSignRole(null)} className="text-slate-400 hover:text-slate-600 cursor-pointer">
+                    <i className="fa-solid fa-xmark text-lg"></i>
+                  </button>
+                </div>
+                <div className="text-xs text-slate-500">Arahkan mouse atau gunakan touch pad untuk membubuhkan tanda tangan.</div>
+                <div className="bg-slate-50 border-2 border-indigo-200 rounded-2xl overflow-hidden shadow-inner relative">
+                  <canvas ref={directCanvasRef} width="380" height="180" className="w-full h-44 touch-none cursor-crosshair bg-white"></canvas>
+                </div>
+                <div className="flex justify-between items-center text-xs">
+                  <button onClick={clearDirectCanvas} className="text-rose-600 hover:underline font-semibold cursor-pointer"><i className="fa-solid fa-rotate-left mr-1"></i>Hapus Pad</button>
+                  <span className="text-[10px] text-slate-400">SI-PIKET Signature</span>
+                </div>
+                <div className="flex gap-3 pt-2">
+                  <button type="button" onClick={() => setDirectSignRole(null)} className="w-1/2 py-2.5 text-xs font-bold text-slate-600 bg-slate-100 hover:bg-slate-200 rounded-xl cursor-pointer transition">Batal</button>
+                  <button type="button" onClick={handleSaveDirectSignature} className="w-1/2 py-2.5 text-xs font-bold text-white bg-indigo-600 hover:bg-indigo-700 rounded-xl shadow-md cursor-pointer transition">Simpan Tanda Tangan</button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {previewPermModal && (
+            <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4 overflow-y-auto no-print-element">
+              <div className="bg-white rounded-3xl max-w-3xl w-full p-6 shadow-2xl space-y-6 relative border border-slate-100 my-8">
+                <div className="flex justify-between items-center border-b border-slate-100 pb-3">
+                  <div className="flex items-center gap-2">
+                    <span className="p-2 bg-indigo-50 text-indigo-600 rounded-xl text-sm"><i className="fa-solid fa-file-contract"></i></span>
+                    <h3 className="font-extrabold text-slate-800 text-base">Surat Perizinan Siswa Resmi</h3>
+                  </div>
+                  <button onClick={() => setPreviewPermModal(null)} className="text-slate-400 hover:text-slate-600 p-1 cursor-pointer"><i className="fa-solid fa-xmark text-xl"></i></button>
+                </div>
+                <div className="border border-slate-200 rounded-2xl p-6 bg-slate-50/50 space-y-4 font-serif text-slate-800 text-xs sm:text-sm shadow-inner">
+                  <div className="text-center border-b border-slate-300 pb-3">
+                    <h2 className="font-extrabold text-slate-900 text-base uppercase tracking-wider">PEMERINTAH DAERAH DINAS PENDIDIKAN</h2>
+                    <h3 className="font-bold text-indigo-900 text-sm">SMA NEGERI 1 PARUNG</h3>
+                    <p className="text-[10px] text-slate-500 font-sans mt-0.5">Jl. Pendidikan No. 123, Telepon: (021) 555-0192</p>
+                  </div>
+                  <div className="text-center py-1">
+                    <h4 className="font-bold underline text-sm uppercase">SURAT IZIN SISWA</h4>
+                    <span className="font-mono text-xs text-slate-500">Nomor: {previewPermModal.slipNumber}</span>
+                  </div>
+                  <p className="leading-relaxed">Yang bertanda tangan di bawah ini, Guru Piket Sekolah memberikan izin kepada siswa:</p>
+                  <table className="w-full text-xs my-2 font-sans">
+                    <tbody>
+                      <tr><td className="w-32 py-1 text-slate-500 font-medium">Nama Siswa</td><td className="w-4">:</td><td className="font-bold text-slate-900">{previewPermModal.studentName}</td></tr>
+                      <tr><td className="py-1 text-slate-500 font-medium">NIS / Kelas</td><td>:</td><td className="font-semibold text-slate-800">{previewPermModal.nis} / {previewPermModal.class}</td></tr>
+                      <tr><td className="py-1 text-slate-500 font-medium">Guru Mata Pelajaran</td><td>:</td><td className="font-semibold text-slate-800">{previewPermModal.mapelTeacher || 'Guru Mapel'}</td></tr>
+                      <tr><td className="py-1 text-slate-500 font-medium">Jenis Perizinan</td><td>:</td><td><span className="px-2 py-0.5 bg-indigo-100 text-indigo-800 font-bold rounded-md text-[11px]">{previewPermModal.type}</span></td></tr>
+                      <tr><td className="py-1 text-slate-500 font-medium">Waktu Izin</td><td>:</td><td className="font-semibold text-slate-800">{previewPermModal.time} WIB ({previewPermModal.date})</td></tr>
+                      <tr><td className="py-1 text-slate-500 font-medium align-top">Alasan Izin</td><td className="align-top">:</td><td className="align-top font-sans text-slate-700">{previewPermModal.reason}</td></tr>
+                    </tbody>
+                  </table>
+                  <div className="pt-4 border-t border-slate-200 space-y-4 font-sans">
+                    <div className="bg-white p-3 rounded-2xl border border-slate-200 shadow-sm flex flex-col sm:flex-row items-center justify-between gap-3 text-center sm:text-left">
+                      <div>
+                        <p className="text-xs font-bold text-indigo-900">SCAN BARCODE HP UNTUK TANDA TANGAN DIGITAL:</p>
+                        <p className="text-[10px] text-slate-500 mt-0.5">Arahkan kamera HP ke barcode untuk membuka lembar tanda tangan digital.</p>
+                      </div>
+                      <div id="qrcode-container" className="p-1.5 bg-white rounded-lg shadow-inner flex-shrink-0"></div>
+                    </div>
+                    <div className="grid grid-cols-3 gap-2 text-center text-xs pt-2">
+                      <div className="space-y-1">
+                        <p className="text-[11px] text-slate-500">Siswa / Orang Tua,</p>
+                        <div className="h-16 flex items-center justify-center">
+                          <div className="border border-dashed border-slate-300 rounded-lg px-2 py-1 bg-slate-50 text-[10px] text-slate-400">( Pemohon )</div>
+                        </div>
+                        <p className="font-bold text-slate-900 underline text-[11px] truncate">{previewPermModal.studentName ? previewPermModal.studentName.split(' ')[0] : 'Siswa'}</p>
+                      </div>
+                      <div className="space-y-1 flex flex-col items-center">
+                        <p className="text-[11px] text-slate-500">Guru Mata Pelajaran,</p>
+                        <div className="h-16 flex flex-col items-center justify-center w-full">
+                          {previewPermModal.signatureMapel ? (
+                            <img src={previewPermModal.signatureMapel} alt="TTD Mapel" className="max-h-16 border border-emerald-200 rounded-lg p-0.5 bg-white shadow-sm" />
+                          ) : (
+                            <div className="flex flex-col items-center gap-1">
+                              <div className="border border-dashed border-amber-300 rounded-lg px-2 py-0.5 bg-amber-50 text-[10px] text-amber-700 font-semibold">Belum TTD</div>
+                              <button type="button" onClick={() => setDirectSignRole({ role: 'guru_mapel', perm: previewPermModal })} className="px-2 py-1 bg-amber-500 hover:bg-amber-600 text-white rounded-md text-[10px] font-bold transition flex items-center gap-1 shadow-sm cursor-pointer"><i className="fa-solid fa-pen"></i> TTD Sekarang</button>
+                            </div>
+                          )}
+                        </div>
+                        <p className="font-bold text-slate-900 underline text-[11px] truncate">{previewPermModal.mapelTeacher || 'Guru Mapel'}</p>
+                      </div>
+                      <div className="space-y-1 flex flex-col items-center">
+                        <p className="text-[11px] text-slate-500">Guru Piket Bertugas,</p>
+                        <div className="h-16 flex flex-col items-center justify-center w-full">
+                          {previewPermModal.signature ? (
+                            <img src={previewPermModal.signature} alt="TTD Piket" className="max-h-16 border border-emerald-200 rounded-lg p-0.5 bg-white shadow-sm" />
+                          ) : (
+                            <div className="flex flex-col items-center gap-1">
+                              <div className="border border-dashed border-amber-300 rounded-lg px-2 py-0.5 bg-amber-50 text-[10px] text-amber-700 font-semibold">Belum TTD</div>
+                              <button type="button" onClick={() => setDirectSignRole({ role: 'guru_piket', perm: previewPermModal })} className="px-2 py-1 bg-indigo-600 hover:bg-indigo-700 text-white rounded-md text-[10px] font-bold transition flex items-center gap-1 shadow-sm cursor-pointer"><i className="fa-solid fa-pen"></i> TTD Sekarang</button>
+                            </div>
+                          )}
+                        </div>
+                        <p className="font-bold text-slate-900 underline text-[11px] truncate">{previewPermModal.piketTeacher || selectedGuru}</p>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+                <div className="flex flex-wrap gap-2 justify-end pt-2">
+                  <button type="button" onClick={() => handleApprovePermission(previewPermModal.id)} className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs rounded-xl shadow-md transition flex items-center gap-1.5 cursor-pointer"><i className="fa-solid fa-circle-check"></i> Direct Approve</button>
+                  <button type="button" onClick={() => triggerPrintSlip(previewPermModal)} className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs rounded-xl shadow-md transition flex items-center gap-1.5 cursor-pointer"><i className="fa-solid fa-print"></i> Cetak Struk / PDF</button>
+                  <button type="button" onClick={() => setPreviewPermModal(null)} className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-600 font-bold text-xs rounded-xl transition cursor-pointer">Tutup</button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* MODAL PRINT PREVIEW THERMAL 80mm */}
+          {printPreviewModal && (
+            <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4 overflow-y-auto no-print-element">
+              <div className="bg-white rounded-3xl max-w-sm w-full p-6 shadow-2xl space-y-4 relative border border-slate-200">
+                <div className="flex justify-between items-center border-b border-slate-100 pb-3">
+                  <div className="flex items-center gap-2">
+                    <i className="fa-solid fa-print text-indigo-600"></i>
+                    <h3 className="font-extrabold text-slate-800 text-sm">Pratinjau Struk Perizinan</h3>
+                  </div>
+                  <button onClick={() => setPrintPreviewModal(null)} className="text-slate-400 hover:text-slate-600 p-1 cursor-pointer">
+                    <i className="fa-solid fa-xmark text-lg"></i>
+                  </button>
+                </div>
+
+                <div className="bg-amber-50/50 p-4 border border-dashed border-amber-300 rounded-2xl font-mono text-xs text-slate-800 space-y-2">
+                  <div className="text-center font-bold">
+                    <p className="text-sm">SLIP IZIN SISWA</p>
+                    <p className="text-[10px]">SMAN 1 PARUNG</p>
+                    <p className="text-[10px] text-slate-400">--------------------------------</p>
+                  </div>
+                  
+                  <div className="space-y-1 text-[11px]">
+                    <div className="flex justify-between"><span className="text-slate-500">No. Slip:</span><span className="font-bold">{printPreviewModal.slipNumber}</span></div>
+                    <div className="flex justify-between"><span className="text-slate-500">Tanggal:</span><span>{printPreviewModal.date || ''}</span></div>
+                    <div className="flex justify-between"><span className="text-slate-500">Siswa:</span><span className="font-bold">{printPreviewModal.studentName}</span></div>
+                    <div className="flex justify-between"><span className="text-slate-500">NIS/Kelas:</span><span>{printPreviewModal.nis} / {printPreviewModal.class}</span></div>
+                    <div className="flex justify-between"><span className="text-slate-500">Guru Mapel:</span><span>{printPreviewModal.mapelTeacher || 'Guru Mapel'}</span></div>
+                    <div className="flex justify-between"><span className="text-slate-500">Jenis Izin:</span><span className="font-bold text-indigo-700">{printPreviewModal.type}</span></div>
+                    <div className="flex justify-between"><span className="text-slate-500">Jam:</span><span>{printPreviewModal.time} WIB</span></div>
+                    <div className="pt-1"><span className="text-slate-500 block">Alasan:</span><span>{printPreviewModal.reason}</span></div>
+                  </div>
+
+                  <div className="text-center text-[10px] text-slate-400 pt-1">--------------------------------</div>
+
+                  <div className="grid grid-cols-3 gap-1 text-[9px] text-center pt-1">
+                    <div>
+                      <p>Siswa</p>
+                      <p className="font-bold mt-4">({printPreviewModal.studentName ? printPreviewModal.studentName.split(' ')[0] : 'Siswa'})</p>
+                    </div>
+                    <div>
+                      <p>Guru Mapel</p>
+                      <p className="font-bold mt-4">({printPreviewModal.mapelTeacher ? printPreviewModal.mapelTeacher.split(' ')[0] : 'Mapel'})</p>
+                    </div>
+                    <div>
+                      <p>Guru Piket</p>
+                      <p className="font-bold mt-4">({printPreviewModal.piketTeacher ? printPreviewModal.piketTeacher.split(' ')[0] : selectedGuru.split(' ')[0]})</p>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="flex gap-2 pt-2">
+                  <button type="button" onClick={executeBrowserPrint} className="w-full py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs rounded-xl shadow-md transition flex items-center justify-center gap-2 cursor-pointer">
+                    <i className="fa-solid fa-print"></i> Cetak ke Printer / PDF
+                  </button>
+                  <button type="button" onClick={() => setPrintPreviewModal(null)} className="py-2.5 px-4 bg-slate-100 hover:bg-slate-200 text-slate-600 font-bold text-xs rounded-xl transition cursor-pointer">
+                    Tutup
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* AREA CETAK (HANYA DITAMPILKAN KE PRINTER OLEH CSS) */}
+          {printPreviewModal && (
+            <div id="print-section">
+              <div style={{ textAlign: 'center', marginBottom: '8px' }}>
+                <h2 style={{ fontSize: '13pt', margin: '0', fontWeight: 'bold' }}>SLIP IZIN SISWA</h2>
+                <h3 style={{ fontSize: '10pt', margin: '2px 0 0 0' }}>SMAN 1 PARUNG</h3>
+                <p style={{ fontSize: '8pt', margin: '2px 0' }}>----------------------------------</p>
+              </div>
+              <table style={{ width: '100%', fontSize: '8.5pt', borderCollapse: 'collapse' }}>
+                <tbody>
+                  <tr><td style={{ width: '30%', padding: '2px 0' }}>No. Slip</td><td style={{ width: '5%' }}>:</td><td style={{ fontWeight: 'bold' }}>{printPreviewModal.slipNumber}</td></tr>
+                  <tr><td style={{ padding: '2px 0' }}>Tanggal</td><td>:</td><td>{printPreviewModal.date || ''}</td></tr>
+                  <tr><td style={{ padding: '2px 0' }}>Siswa</td><td>:</td><td style={{ fontWeight: 'bold' }}>{printPreviewModal.studentName}</td></tr>
+                  <tr><td style={{ padding: '2px 0' }}>NIS / Kelas</td><td>:</td><td>{printPreviewModal.nis} / {printPreviewModal.class}</td></tr>
+                  <tr><td style={{ padding: '2px 0' }}>Guru Mapel</td><td>:</td><td>{printPreviewModal.mapelTeacher || 'Guru Mapel'}</td></tr>
+                  <tr><td style={{ padding: '2px 0' }}>Jenis Izin</td><td>:</td><td style={{ fontWeight: 'bold' }}>{printPreviewModal.type}</td></tr>
+                  <tr><td style={{ padding: '2px 0' }}>Waktu Izin</td><td>:</td><td>{printPreviewModal.time} WIB</td></tr>
+                  <tr><td style={{ padding: '2px 0', verticalAlign: 'top' }}>Alasan</td><td style={{ verticalAlign: 'top' }}>:</td><td style={{ verticalAlign: 'top' }}>{printPreviewModal.reason}</td></tr>
+                </tbody>
+              </table>
+              <p style={{ fontSize: '8pt', margin: '6px 0 2px 0', textAlign: 'center' }}>----------------------------------</p>
+              
+              <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '10px', fontSize: '7.5pt', textAlign: 'center' }}>
+                <div style={{ width: '30%' }}>
+                  <p style={{ margin: '0 0 5px 0' }}>Siswa,</p>
+                  <div style={{ height: '30px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}><span style={{ color: '#888' }}>( Pemohon )</span></div>
+                  <p style={{ margin: '0', fontWeight: 'bold' }}>({printPreviewModal.studentName ? printPreviewModal.studentName.split(' ')[0] : 'Siswa'})</p>
+                </div>
+                <div style={{ width: '35%' }}>
+                  <p style={{ margin: '0 0 5px 0' }}>Guru Mapel,</p>
+                  <div style={{ height: '30px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                    {printPreviewModal.signatureMapel ? <img src={printPreviewModal.signatureMapel} style={{ maxHeight: '28px' }} alt="TTD" /> : <span style={{ color: '#888' }}>(........)</span>}
+                  </div>
+                  <p style={{ margin: '0', fontWeight: 'bold' }}>({printPreviewModal.mapelTeacher ? printPreviewModal.mapelTeacher.split(' ')[0] : 'Mapel'})</p>
+                </div>
+                <div style={{ width: '35%' }}>
+                  <p style={{ margin: '0 0 5px 0' }}>Guru Piket,</p>
+                  <div style={{ height: '30px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                    {printPreviewModal.signature ? <img src={printPreviewModal.signature} style={{ maxHeight: '28px' }} alt="TTD" /> : <span style={{ color: '#888' }}>(........)</span>}
+                  </div>
+                  <p style={{ margin: '0', fontWeight: 'bold' }}>({printPreviewModal.piketTeacher ? printPreviewModal.piketTeacher.split(' ')[0] : selectedGuru.split(' ')[0]})</p>
+                </div>
+              </div>
+              <div style={{ textAlign: 'center', marginTop: '12px', fontSize: '7.5pt' }}><i>Simpan slip ini untuk ditunjukkan kepada Guru / Satpam.</i></div>
+            </div>
+          )}
+
+        </div>
+      );
+    }
+
+    ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+  </script>
+</body>
+</html>
