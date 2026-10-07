@@ -754,7 +754,7 @@
                 <h2 className="text-lg font-extrabold text-white">SI-PIKET SMAN 1 PARUNG</h2>
                 <p className="text-xs text-slate-400">Masukkan PIN untuk melanjutkan</p>
               </div>
-              <input type="password" inputMode="numeric" autoFocus placeholder="PIN" value={pinInput}
+              <input type="password" autoFocus autoComplete="current-password" placeholder="PIN" value={pinInput}
                 onChange={(e) => setPinInput(e.target.value)}
                 className="w-full px-4 py-3 text-center text-lg tracking-widest rounded-xl bg-slate-900 border border-slate-600 text-white focus:outline-none focus:ring-2 focus:ring-indigo-500" />
               {loginError && <p className="text-xs text-rose-400 text-center">{loginError}</p>}
