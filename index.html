@@ -6,9 +6,9 @@
   <title>SI-PIKET - Sistem Informasi Guru Piket SMAN 1 Parung</title>
   <!-- Tailwind CSS CDN -->
   <script src="https://cdn.tailwindcss.com"></script>
-  <!-- React dan Babel CDN untuk JSX browser -->
-  <script src="https://unpkg.com/react@18/umd/react.development.js" crossorigin></script>
-  <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js" crossorigin></script>
+  <!-- React (production build) dan Babel CDN untuk JSX browser -->
+  <script src="https://unpkg.com/react@18.3.1/umd/react.production.min.js" crossorigin></script>
+  <script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.production.min.js" crossorigin></script>
   <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
   <!-- QRCode.js Library -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
@@ -45,50 +45,41 @@
   <script>
     (function () {
       if (typeof google !== 'undefined' && google.script && google.script.run) {
-        // Sudah berjalan di dalam Apps Script asli (dibuka lewat URL .../exec bawaan
-        // Apps Script) - google.script.run bawaan dipakai apa adanya, shim ini dilewati.
+        // Berjalan di dalam Apps Script asli - google.script.run bawaan dipakai apa adanya.
         return;
       }
 
       // ================================================================================
       // SHIM google.script.run UNTUK HOSTING DI LUAR APPS SCRIPT (mis. GitHub + Vercel)
-      // --------------------------------------------------------------------------------
-      // Saat aplikasi ini dijalankan DI DALAM Google Apps Script, objek `google.script.run`
-      // disediakan otomatis oleh Google untuk memanggil fungsi di code.gs. Karena aplikasi
-      // ini di-hosting terpisah (statis) di Vercel, objek itu TIDAK PERNAH ada di browser -
-      // akibatnya kode di bawah selalu mengira "tidak terhubung ke backend" dan menampilkan
-      // data demo/dummy, walau data & filter tanggal di code.gs sudah benar.
-      //
-      // Shim ini MENIRU PERSIS cara pakai google.script.run (withSuccessHandler,
-      // withFailureHandler, lalu panggil nama fungsi apa pun) tapi di baliknya memakai
-      // fetch() ke Web App Apps Script yang sudah di-deploy sebagai API JSON (lihat
-      // doPost() di code.gs). Dengan begini, SELURUH kode React di file ini yang memanggil
-      // google.script.run.withSuccessHandler(...).getSiswaList() dst. TIDAK PERLU diubah -
-      // hanya URL di bawah ini yang perlu diisi sesuai deployment Anda.
+      // Meniru cara pakai google.script.run (withSuccessHandler, withFailureHandler, lalu
+      // panggil nama fungsi apa pun) tapi memakai fetch() ke Web App Apps Script (doPost).
+      // Setiap request membawa token login (sessionStorage 'sipiket_token').
       // ================================================================================
 
-      // *** WAJIB DIISI ***: URL Web App Apps Script Anda (Deploy > Manage deployments >
-      // salin URL yang berakhiran "/exec"). Tanpa ini, aplikasi tetap akan memakai data demo.
+      // *** WAJIB DIISI ***: URL Web App Apps Script (Deploy > Manage deployments, berakhiran "/exec").
       var SIPIKET_API_URL = "https://script.google.com/macros/s/AKfycbyAjOHFBTFiqBt_nMVW38-j-JR-VLEYqYttfIDVJCPjRJ0UVQSDNrKnys6Qy27026M7bg/exec";
+
+      function getToken_() {
+        try { return sessionStorage.getItem('sipiket_token') || ''; } catch (e) { return ''; }
+      }
 
       function callAppsScript_(fnName, args, onSuccess, onFailure) {
         fetch(SIPIKET_API_URL, {
           method: 'POST',
-          // PENTING: pakai 'text/plain' (bukan 'application/json') supaya browser TIDAK
-          // mengirim preflight request OPTIONS - Apps Script Web App tidak bisa menjawab
-          // preflight itu, jadi kalau pakai 'application/json' permintaan akan gagal
-          // diblokir CORS. code.gs tetap mem-parse isinya sebagai JSON secara manual.
+          // 'text/plain' (bukan 'application/json') supaya browser TIDAK mengirim preflight
+          // OPTIONS yang tidak bisa dijawab Apps Script. code.gs mem-parse isinya sebagai JSON.
           headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-          body: JSON.stringify({ fn: fnName, args: args })
+          body: JSON.stringify({ fn: fnName, args: args, token: getToken_() })
         })
           .then(function (res) { return res.json(); })
           .then(function (json) {
-            if (json && json.success) {
-              if (onSuccess) onSuccess(json.result);
-            } else {
-              var msg = (json && json.error) || 'Terjadi kesalahan pada server.';
-              if (onFailure) onFailure(msg); else console.error('SI-PIKET API error (' + fnName + '):', msg);
+            if (json && json.success) { if (onSuccess) onSuccess(json.result); return; }
+            var msg = (json && json.error) || 'Terjadi kesalahan pada server.';
+            if (msg === 'UNAUTHORIZED') {
+              try { sessionStorage.removeItem('sipiket_token'); } catch (e) {}
+              window.dispatchEvent(new Event('sipiket-unauth'));
             }
+            if (onFailure) onFailure(msg); else console.error('SI-PIKET API error (' + fnName + '):', msg);
           })
           .catch(function (err) {
             if (onFailure) onFailure(err && err.message ? err.message : String(err));
@@ -117,10 +108,8 @@
 
       window.google = window.google || {};
       window.google.script = window.google.script || {};
-      // "run" dibuat sebagai getter supaya SETIAP kali "google.script.run" diakses (mis. dua
-      // pemanggilan berbeda seperti .withSuccessHandler(a).getX() dan .withSuccessHandler(b).getY()
-      // yang dijalankan berurutan), masing-masing mendapat runner BARU dengan successHandler-nya
-      // sendiri - tidak saling menimpa satu sama lain.
+      // "run" sebagai getter: SETIAP akses google.script.run mendapat runner BARU dengan handler
+      // sendiri, sehingga pemanggilan berurutan tidak saling menimpa.
       Object.defineProperty(window.google.script, 'run', {
         get: function () { return makeRunner_(); },
         configurable: true
@@ -153,7 +142,7 @@
         const timer = setInterval(() => setCurrentDateTime(new Date()), 1000);
         return () => clearInterval(timer);
       }, []);
-      
+
       const [classes, setClasses] = useState([]);
       const [permissions, setPermissions] = useState([]);
       const [journals, setJournals] = useState([]);
@@ -166,29 +155,27 @@
         if (guruList.length > 0) {
           const updatePiketTeacher = () => {
              const now = new Date();
-             const currentDayIndex = now.getDay(); 
+             const currentDayIndex = now.getDay();
              const days = ["Minggu", "Senin", "Selasa", "Rabu", "Kamis", "Jumat", "Sabtu"];
              const currentDayName = days[currentDayIndex];
-             
+
              // Cari semua guru yang jadwalnya hari ini
              const availableTeachersToday = guruList.filter(g => g.hari.toLowerCase() === currentDayName.toLowerCase());
-             
+
              if (availableTeachersToday.length > 0) {
                const currentHour = now.getHours();
                // Membagi guru piket secara bergiliran berdasarkan jam saat ini
                const teacherIndex = currentHour % availableTeachersToday.length;
                const autoSelectedTeacher = availableTeachersToday[teacherIndex].nama;
-               
+
                setSelectedGuru(prev => prev !== autoSelectedTeacher ? autoSelectedTeacher : prev);
              } else {
                setSelectedGuru('Guru Piket');
              }
           };
 
-          // Panggil langsung saat mounted / perubahan daftar guru
           updatePiketTeacher();
-          // Set interval cek setiap menit
-          const intervalId = setInterval(updatePiketTeacher, 60000); 
+          const intervalId = setInterval(updatePiketTeacher, 60000);
 
           return () => clearInterval(intervalId);
         }
@@ -203,10 +190,10 @@
 
       const initialPermissionState = { studentName: '', class: '', type: 'Izin Pulang', reason: '', nis: '', mapelTeacher: '', gender: 'Laki-laki', noHpOrtu: '' };
       const [newPermission, setNewPermission] = useState(initialPermissionState);
-      const [isNewStudentMode, setIsNewStudentMode] = useState(false); 
-      
+      const [isNewStudentMode, setIsNewStudentMode] = useState(false);
+
       const [newJournal, setNewJournal] = useState({ category: 'Umum', content: '' });
-      
+
       // Modal Controls
       const [showPermModal, setShowPermModal] = useState(false);
       const [previewPermModal, setPreviewPermModal] = useState(null);
@@ -218,9 +205,47 @@
       const [searchQuery, setSearchQuery] = useState('');
       const [siswaSearchInput, setSiswaSearchInput] = useState('');
       const [filteredSiswaSuggestions, setFilteredSiswaSuggestions] = useState([]);
-      
+
       const [isLoading, setIsLoading] = useState(false);
       const [toastMsg, setToastMsg] = useState('');
+
+      // --- AUTENTIKASI PIN ---
+      const [authed, setAuthed] = useState(() => {
+        try { return !!sessionStorage.getItem('sipiket_token'); } catch (e) { return false; }
+      });
+      const [pinInput, setPinInput] = useState('');
+      const [loginError, setLoginError] = useState('');
+      const [isLoggingIn, setIsLoggingIn] = useState(false);
+      const reqSeq = useRef(0);
+
+      useEffect(() => {
+        const onUnauth = () => { setAuthed(false); setLoginError('Sesi berakhir, silakan masuk lagi.'); };
+        window.addEventListener('sipiket-unauth', onUnauth);
+        return () => window.removeEventListener('sipiket-unauth', onUnauth);
+      }, []);
+
+      const handleLogin = (e) => {
+        e.preventDefault();
+        if (!pinInput.trim()) return;
+        setIsLoggingIn(true); setLoginError('');
+        google.script.run
+          .withSuccessHandler(res => {
+            try { sessionStorage.setItem('sipiket_token', res.token); } catch (err) {}
+            setPinInput(''); setIsLoggingIn(false); setAuthed(true);
+          })
+          .withFailureHandler(msg => {
+            setLoginError(String(msg).replace(/^Error:\s*/, ''));
+            setIsLoggingIn(false);
+          })
+          .login(pinInput.trim());
+      };
+
+      const handleLogout = () => {
+        google.script.run.logout();
+        try { sessionStorage.removeItem('sipiket_token'); } catch (e) {}
+        setClasses([]); setPermissions([]); setNotifOrtuList([]); setMissingContacts([]);
+        setAuthed(false);
+      };
 
       // Rekap PDF Export States
       const [rekapMode, setRekapMode] = useState('mingguan');
@@ -239,7 +264,7 @@
       const triggerPrintSlip = (perm) => {
         setPrintPreviewModal(perm);
       };
-      
+
       const executeBrowserPrint = () => {
         setTimeout(() => { window.print(); }, 200);
       };
@@ -259,67 +284,54 @@
         return Array.from(clsSet).sort();
       }, [siswaList, classes]);
 
+      // Satu request gabungan (getDashboardData) menggantikan 7 request terpisah.
       const loadAllData = (dateTarget, isBackground = false) => {
-        if (typeof google !== 'undefined' && google.script && google.script.run) {
-          if (!isBackground) setIsLoading(true);
-          
-          google.script.run.withSuccessHandler(data => { if (data) setSiswaList(data); }).getSiswaList();
-          google.script.run.withSuccessHandler(data => {
-            if (data && data.length > 0) setGuruList(data);
-          }).getGuruList();
-          
-          google.script.run.withSuccessHandler(data => {
-            if (data) setPermissions(data);
+        if (isBackground && document.hidden) return; // jangan refresh kalau tab tidak terlihat
+        const mySeq = ++reqSeq.current;
+        if (!isBackground) setIsLoading(true);
+        google.script.run
+          .withSuccessHandler(d => {
             if (!isBackground) setIsLoading(false);
-          }).getPermissions(dateTarget);
-          
-          google.script.run.withSuccessHandler(data => { if (data) setClasses(data); }).getAbsensiKelas(dateTarget);
-          google.script.run.withSuccessHandler(data => { if (data) setJournals(data); }).getJournals();
-          google.script.run.withSuccessHandler(data => { if (data) setNotifOrtuList(data); }).getNotifikasiOrangTua(dateTarget, selectedKelasNotif);
-          google.script.run.withSuccessHandler(data => { if (data) setMissingContacts(data); }).getMissingAttendanceContacts(dateTarget);
-        } else {
-            // Mock data untuk keperluan preview jika Google Apps Script tidak terdeteksi
-            setIsLoading(true);
-            setTimeout(() => {
-                // Menyiapkan data Guru lengkap agar fungsi rotasi bisa berjalan pada hari apapun di saat preview.
-                setGuruList([
-                    {nama: "Budi Santoso, M.Pd", hari: "Senin"}, {nama: "Siti Aminah, S.Pd", hari: "Senin"},
-                    {nama: "Rahman Hakim, S.Kom", hari: "Selasa"}, {nama: "Dina Mariana, S.Pd", hari: "Selasa"},
-                    {nama: "Umar Bakri, S.Pd", hari: "Rabu"}, {nama: "Nia Ramadhani, S.Pd", hari: "Rabu"},
-                    {nama: "Bapak Kamis Pertama", hari: "Kamis"}, {nama: "Ibu Kamis Kedua", hari: "Kamis"}, // Ditambah untuk tes hr Kamis
-                    {nama: "Ahmad Jaelani, S.Ag", hari: "Jumat"}
-                ]);
-                setSiswaList([
-                    {nis: "1234", nama: "Andi Saputra", kelas: "X-A", gender: "Laki-laki", noHpOrtu: "081234"},
-                    {nis: "1235", nama: "Budi Doremi", kelas: "X-B", gender: "Laki-laki", noHpOrtu: "081235"},
-                ]);
-                setPermissions([
-                    {id: 1, slipNumber: "PKT/20231026/001", studentName: "Andi Saputra", class: "X-A", type: "Izin Pulang", reason: "Sakit", time: "09:00", timeIn: "-", status: "Disetujui", piketTeacher: "Budi Santoso", mapelTeacher: "Siti Aminah", date: filterDate}
-                ]);
-                setClasses([
-                    {id: 1, name: "X-A", total: 30, present: 28, sick: 1, leave: 0, absent: 1, late: 0, earlyLeave: 0, students: [{name: "Andi Saputra", status: "Sakit", notes: "Demam", noHpOrtu: "081234"}, {name: "Bagas", status: "Alfa", notes: "", noHpOrtu: "-"}]},
-                    {id: 2, name: "X-B", total: 32, present: 32, sick: 0, leave: 0, absent: 0, late: 2, earlyLeave: 0, students: []}
-                ]);
-                setNotifOrtuList([
-                    {nisn: "1234", name: "Andi Saputra", kelas: "X-A", status: "SAKIT", notes: "Demam", noHpOrtu: "081234", waUrl: "#"}
-                ]);
-                setMissingContacts([
-                    {name: "Ketua Kelas XI-A", role: "Ketua", kelas: "XI-A", phone: "08999", waUrl: "#"}
-                ]);
-                setIsLoading(false);
-            }, 1000);
-        }
+            if (mySeq !== reqSeq.current) return; // abaikan respons usang (tanggal sudah berganti)
+            if (d) {
+              setPermissions(d.permissions || []);
+              setClasses(d.classes || []);
+              setJournals(d.journals || []);
+              setNotifOrtuList(d.notif || []);
+              setMissingContacts(d.missing || []);
+            }
+          })
+          .withFailureHandler(err => {
+            if (!isBackground) { setIsLoading(false); showToast('Gagal memuat data: ' + err); }
+          })
+          .getDashboardData(dateTarget);
+      };
+
+      // Data yang jarang berubah (daftar siswa & guru).
+      const loadStaticData = () => {
+        google.script.run
+          .withSuccessHandler(d => {
+            if (!d) return;
+            if (d.siswa) setSiswaList(d.siswa);
+            if (d.guru && d.guru.length > 0) setGuruList(d.guru);
+          })
+          .getStaticData();
       };
 
       useEffect(() => {
+        if (!authed) return;
         loadAllData(filterDate, false);
-        // Auto-refresh tampilan tiap 30 detik - hanya menampilkan ulang data yang sudah ada
-        // di sheet lokal (Absensi_Kelas + sheet per kelas absen_<KELAS>), tidak mengakses
-        // spreadsheet sumber. Data di sheet lokal itu sendiri diperbarui oleh trigger
-        // auto-import di backend (lihat menu "SI-PIKET Admin" > Aktifkan Auto-Import).
-        const autoRefreshInterval = setInterval(() => loadAllData(filterDate, true), 30000);
-        return () => clearInterval(autoRefreshInterval);
-      }, [filterDate, selectedKelasNotif]);
+        // Auto-refresh tiap 30 detik (server meng-cache hasilnya ~25 detik).
+        const id = setInterval(() => loadAllData(filterDate, true), 30000);
+        return () => clearInterval(id);
+      }, [filterDate, authed]);
+
+      useEffect(() => {
+        if (!authed) return;
+        loadStaticData();
+        const id = setInterval(loadStaticData, 300000);
+        return () => clearInterval(id);
+      }, [authed]);
 
       useEffect(() => {
         if (signSlipParam) {
@@ -368,10 +380,10 @@
       const handleFetchRekapData = () => {
         setIsFetchingRekap(true);
         let startDate, endDate, info;
-        
+
         if (rekapMode === 'mingguan') {
           const d = parseLocalDateStr_(rekapInputDate);
-          const day = d.getDay() || 7; 
+          const day = d.getDay() || 7;
           if(day !== 1) d.setDate(d.getDate() - (day - 1));
           startDate = getLocalDateStr_(d);
           d.setDate(d.getDate() + 4);
@@ -387,22 +399,18 @@
 
         setRekapInfoText(info);
 
-        if (typeof google !== 'undefined' && google.script && google.script.run) {
-          google.script.run.withSuccessHandler((data) => {
+        google.script.run
+          .withSuccessHandler((data) => {
             setRekapData(data || []);
             setIsFetchingRekap(false);
             if(data && data.length > 0) showToast("Data rekap berhasil ditarik!");
             else showToast("Tidak ada data pada periode dan kelas ini.");
-          }).getBulkRekap(startDate, endDate, rekapSelectedClass);
-        } else {
-          setTimeout(() => {
-            setRekapData([
-                {kelas: "X-A", nis: "1234", nama: "Andi Saputra", hadir: 4, sakit: 1, izin: 0, alfa: 0, dispen: 0, terlambat: 0, pulang_cepat: 0, persentase: "80.0%"}
-            ]);
+          })
+          .withFailureHandler((err) => {
             setIsFetchingRekap(false);
-            showToast("Pratinjau data rekap berhasil dimuat!");
-          }, 1000);
-        }
+            showToast("Gagal menarik data rekap: " + err);
+          })
+          .getBulkRekap(startDate, endDate, rekapSelectedClass);
       };
 
       const handleDownloadPDF = () => {
@@ -413,14 +421,14 @@
 
         const { jsPDF } = window.jspdf;
         const doc = new jsPDF('p', 'pt', 'a4');
-        
+
         const safeClassName = rekapSelectedClass === 'Semua' ? 'Semua Kelas' : rekapSelectedClass;
         const periodText = rekapMode === 'mingguan' ? `Periode Mingguan: ${rekapInputDate}` : `Periode Bulan: ${rekapInputMonth}`;
 
         doc.setFontSize(14);
         doc.setFont("helvetica", "bold");
         doc.text("REKAPITULASI ABSENSI SISWA - SMAN 1 PARUNG", 40, 40);
-        
+
         doc.setFontSize(10);
         doc.setFont("helvetica", "normal");
         doc.text(`Kelas: ${safeClassName}`, 40, 60);
@@ -453,8 +461,8 @@
           startY: 90,
           theme: 'grid',
           styles: { fontSize: 8, cellPadding: 4 },
-          headStyles: { fillColor: [79, 70, 229] }, 
-          alternateRowStyles: { fillColor: [248, 250, 252] } 
+          headStyles: { fillColor: [79, 70, 229] },
+          alternateRowStyles: { fillColor: [248, 250, 252] }
         });
 
         const fileName = `Rekap_Absensi_${safeClassName.replace(/[^a-zA-Z0-9]/g, '_')}_${rekapMode}.pdf`;
@@ -513,9 +521,9 @@
           return c;
         });
         setClasses(updatedClasses);
-        if (typeof google !== 'undefined' && google.script && google.script.run && targetUpdatedObj) {
-          google.script.run.saveAbsensiKelas(targetUpdatedObj);
-          google.script.run.withSuccessHandler(data => { if (data) setNotifOrtuList(data); }).getNotifikasiOrangTua(filterDate, selectedKelasNotif);
+        if (targetUpdatedObj) {
+          // Setelah tersimpan, muat ulang data (notifikasi ortu ikut diperbarui dari server).
+          google.script.run.withSuccessHandler(() => loadAllData(filterDate, true)).saveAbsensiKelas(targetUpdatedObj);
         }
         setNewStudentAttendance({ name: '', status: 'Terlambat', notes: '' });
         showToast("Catatan ketidakhadiran siswa berhasil disimpan!");
@@ -526,21 +534,14 @@
         if (!perm) return;
         setIsLoading(true);
         const updatedPerm = { ...perm, status: "Disetujui" };
-        if (typeof google !== 'undefined' && google.script && google.script.run) {
-          google.script.run.withSuccessHandler((res) => {
-            if (res.success) {
-              setPermissions(prev => prev.map(p => p.id === id ? updatedPerm : p));
-              if (previewPermModal && previewPermModal.id === id) setPreviewPermModal(prev => ({ ...prev, status: 'Disetujui' }));
-              showToast("Status perizinan disetujui!");
-            }
-            setIsLoading(false);
-          }).savePermission(updatedPerm);
-        } else {
-          setPermissions(prev => prev.map(p => p.id === id ? updatedPerm : p));
-          if (previewPermModal && previewPermModal.id === id) setPreviewPermModal(prev => ({ ...prev, status: 'Disetujui' }));
-          showToast("Status perizinan disetujui!");
+        google.script.run.withSuccessHandler((res) => {
+          if (res.success) {
+            setPermissions(prev => prev.map(p => p.id === id ? updatedPerm : p));
+            if (previewPermModal && previewPermModal.id === id) setPreviewPermModal(prev => ({ ...prev, status: 'Disetujui' }));
+            showToast("Status perizinan disetujui!");
+          }
           setIsLoading(false);
-        }
+        }).withFailureHandler(() => setIsLoading(false)).savePermission(updatedPerm);
       };
 
       const handleRejectPermission = (id) => {
@@ -548,40 +549,27 @@
         if (!perm) return;
         setIsLoading(true);
         const updatedPerm = { ...perm, status: "Ditolak" };
-        if (typeof google !== 'undefined' && google.script && google.script.run) {
-          google.script.run.withSuccessHandler((res) => {
-            if (res.success) {
-              setPermissions(prev => prev.map(p => p.id === id ? updatedPerm : p));
-              if (previewPermModal && previewPermModal.id === id) setPreviewPermModal(prev => ({ ...prev, status: 'Ditolak' }));
-              showToast("Status perizinan ditolak!");
-            }
-            setIsLoading(false);
-          }).savePermission(updatedPerm);
-        } else {
-          setPermissions(prev => prev.map(p => p.id === id ? updatedPerm : p));
-          if (previewPermModal && previewPermModal.id === id) setPreviewPermModal(prev => ({ ...prev, status: 'Ditolak' }));
-          showToast("Status perizinan ditolak!");
+        google.script.run.withSuccessHandler((res) => {
+          if (res.success) {
+            setPermissions(prev => prev.map(p => p.id === id ? updatedPerm : p));
+            if (previewPermModal && previewPermModal.id === id) setPreviewPermModal(prev => ({ ...prev, status: 'Ditolak' }));
+            showToast("Status perizinan ditolak!");
+          }
           setIsLoading(false);
-        }
+        }).withFailureHandler(() => setIsLoading(false)).savePermission(updatedPerm);
       };
 
       const handleReturnStudent = (slipNumber) => {
         setIsLoading(true);
         const now = new Date();
         const timeIn = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
-        if (typeof google !== 'undefined' && google.script && google.script.run) {
-          google.script.run.withSuccessHandler((res) => {
-            if (res.success) {
-              setPermissions(prev => prev.map(p => p.slipNumber === slipNumber ? { ...p, status: 'Kembali', timeIn: timeIn } : p));
-              showToast("Siswa dicatat telah kembali ke sekolah!");
-            }
-            setIsLoading(false);
-          }).updatePermissionStatus(slipNumber, 'Kembali', timeIn, 'Siswa kembali ke kelas.');
-        } else {
-          setPermissions(prev => prev.map(p => p.slipNumber === slipNumber ? { ...p, status: 'Kembali', timeIn: timeIn } : p));
-          showToast("Siswa dicatat telah kembali ke sekolah!");
+        google.script.run.withSuccessHandler((res) => {
+          if (res.success) {
+            setPermissions(prev => prev.map(p => p.slipNumber === slipNumber ? { ...p, status: 'Kembali', timeIn: timeIn } : p));
+            showToast("Siswa dicatat telah kembali ke sekolah!");
+          }
           setIsLoading(false);
-        }
+        }).withFailureHandler(() => setIsLoading(false)).updatePermissionStatus(slipNumber, 'Kembali', timeIn, 'Siswa kembali ke kelas.');
       };
 
       const handleAddPermission = (e) => {
@@ -592,7 +580,7 @@
         const timeString = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
         const { queueOrder, slipNumber } = getNextQueueOrderAndSlip();
 
-        if (isNewStudentMode && typeof google !== 'undefined' && google.script && google.script.run) {
+        if (isNewStudentMode) {
           google.script.run.withSuccessHandler((res) => {
             if (res.success) {
               setSiswaList(prev => [...prev, { nis: newPermission.nis || "-", nama: newPermission.studentName, kelas: newPermission.class, gender: newPermission.gender, noHpOrtu: newPermission.noHpOrtu }]);
@@ -609,23 +597,15 @@
           signature: null, signatureMapel: null
         };
 
-        if (typeof google !== 'undefined' && google.script && google.script.run) {
-          google.script.run.withSuccessHandler((res) => {
-            if (res.success) {
-              setPermissions([newRecord, ...permissions]);
-              setNewPermission(initialPermissionState);
-              setSiswaSearchInput(''); setIsNewStudentMode(false); setShowPermModal(false);
-              showToast("Permohonan izin berhasil disimpan!");
-            }
-            setIsLoading(false);
-          }).savePermission({ ...newRecord, date: filterDate });
-        } else {
-          setPermissions([newRecord, ...permissions]);
-          setNewPermission(initialPermissionState);
-          setSiswaSearchInput(''); setIsNewStudentMode(false); setShowPermModal(false);
-          showToast("Permohonan izin baru berhasil dibuat!");
+        google.script.run.withSuccessHandler((res) => {
+          if (res.success) {
+            setPermissions([newRecord, ...permissions]);
+            setNewPermission(initialPermissionState);
+            setSiswaSearchInput(''); setIsNewStudentMode(false); setShowPermModal(false);
+            showToast("Permohonan izin berhasil disimpan!");
+          }
           setIsLoading(false);
-        }
+        }).withFailureHandler(() => setIsLoading(false)).savePermission({ ...newRecord, date: filterDate });
       };
 
       const handleAddJournal = (e) => {
@@ -635,27 +615,20 @@
         const now = new Date();
         const timeString = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
         const newLog = { id: Date.now(), time: timeString, category: newJournal.category, piketTeacher: selectedGuru, content: newJournal.content, date: filterDate };
-        if (typeof google !== 'undefined' && google.script && google.script.run) {
-          google.script.run.withSuccessHandler((res) => {
-            if (res.success) {
-              setJournals([newLog, ...journals]);
-              setNewJournal({ category: 'Umum', content: '' });
-              showToast("Catatan jurnal berhasil disimpan!");
-            }
-            setIsLoading(false);
-          }).savePiketLog(newLog);
-        } else {
-          setJournals([newLog, ...journals]);
-          setNewJournal({ category: 'Umum', content: '' });
-          showToast("Catatan jurnal berhasil disimpan!");
+        google.script.run.withSuccessHandler((res) => {
+          if (res.success) {
+            setJournals([newLog, ...journals]);
+            setNewJournal({ category: 'Umum', content: '' });
+            showToast("Catatan jurnal berhasil disimpan!");
+          }
           setIsLoading(false);
-        }
+        }).withFailureHandler(() => setIsLoading(false)).savePiketLog(newLog);
       };
 
       const handleSendPesanOrtu = (item) => {
         if (!item.waUrl || item.waUrl === "#") { alert('Nomor HP Orang Tua belum diisi di Sheet Siswa atau Data_Ortu!'); return; }
         window.open(item.waUrl, '_blank');
-        if (typeof google !== 'undefined' && google.script && google.script.run) google.script.run.saveLogPesanOrangTua(item);
+        google.script.run.saveLogPesanOrangTua(item);
         showToast(`Membuka WhatsApp untuk mengirim pesan ke Orang Tua ${item.name}`);
       };
 
@@ -669,7 +642,7 @@
           const item = validItems[i];
           showToast(`Memproses pesan ke-${i + 1} dari ${validItems.length} (${item.name})...`);
           window.open(item.waUrl, '_blank');
-          if (typeof google !== 'undefined' && google.script && google.script.run) google.script.run.saveLogPesanOrangTua(item);
+          google.script.run.saveLogPesanOrangTua(item);
           await new Promise(resolve => setTimeout(resolve, 2000));
         }
         setIsLoading(false);
@@ -705,8 +678,8 @@
           }
           return p;
         }));
-        if (typeof google !== 'undefined' && google.script && google.script.run && updatedObj) google.script.run.savePermission(updatedObj);
-        
+        if (updatedObj) google.script.run.savePermission(updatedObj);
+
         setTimeout(() => {
           setIsLoading(false);
           alert('Tanda Tangan Terkirim!');
@@ -728,7 +701,7 @@
           }
           return p;
         }));
-        if (typeof google !== 'undefined' && google.script && google.script.run && updatedObj) google.script.run.savePermission(updatedObj);
+        if (updatedObj) google.script.run.savePermission(updatedObj);
         if (previewPermModal && previewPermModal.id === perm.id) {
           setPreviewPermModal(prev => {
             if (role === 'guru_mapel') return { ...prev, signatureMapel: sigDataUrl };
@@ -754,7 +727,7 @@
       }, [classes, permissions]);
 
       const filteredPermissions = useMemo(() => {
-        return permissions.filter(p => 
+        return permissions.filter(p =>
           (p.studentName && p.studentName.toLowerCase().includes(searchQuery.toLowerCase())) ||
           (p.class && p.class.toLowerCase().includes(searchQuery.toLowerCase())) ||
           (p.slipNumber && p.slipNumber.toLowerCase().includes(searchQuery.toLowerCase()))
@@ -768,6 +741,30 @@
 
 
       // -------------- RENDER AREA -------------- //
+
+      // Layar login PIN (semua halaman, termasuk halaman tanda tangan lewat QR, butuh PIN).
+      if (!authed) {
+        return (
+          <div className="min-h-screen bg-slate-900 flex items-center justify-center p-4">
+            <form onSubmit={handleLogin} className="max-w-sm w-full bg-slate-800 rounded-3xl p-6 shadow-2xl border border-slate-700 space-y-4">
+              <div className="text-center">
+                <div className="w-12 h-12 bg-indigo-500/20 text-indigo-400 rounded-2xl flex items-center justify-center mx-auto mb-2 text-xl">
+                  <i className="fa-solid fa-lock"></i>
+                </div>
+                <h2 className="text-lg font-extrabold text-white">SI-PIKET SMAN 1 PARUNG</h2>
+                <p className="text-xs text-slate-400">Masukkan PIN untuk melanjutkan</p>
+              </div>
+              <input type="password" inputMode="numeric" autoFocus placeholder="PIN" value={pinInput}
+                onChange={(e) => setPinInput(e.target.value)}
+                className="w-full px-4 py-3 text-center text-lg tracking-widest rounded-xl bg-slate-900 border border-slate-600 text-white focus:outline-none focus:ring-2 focus:ring-indigo-500" />
+              {loginError && <p className="text-xs text-rose-400 text-center">{loginError}</p>}
+              <button type="submit" disabled={isLoggingIn} className="w-full py-3 bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-sm rounded-xl disabled:opacity-50 cursor-pointer">
+                {isLoggingIn ? <i className="fa-solid fa-circle-notch fa-spin"></i> : 'Masuk'}
+              </button>
+            </form>
+          </div>
+        );
+      }
 
       if (mobileSignSlip) {
         return (
@@ -822,7 +819,7 @@
 
       return (
         <div className="min-h-screen flex flex-col">
-          
+
           <header className="bg-indigo-700 text-white shadow-md no-print-element">
             <div className="max-w-7xl mx-auto px-4 py-3 flex flex-wrap justify-between items-center gap-4">
               <div className="flex items-center gap-3">
@@ -862,6 +859,10 @@
                     ) : (<span className="font-semibold text-white">Guru Piket</span>)}
                   </div>
                 </div>
+
+                <button onClick={handleLogout} className="px-3 py-2 bg-indigo-800/80 hover:bg-indigo-900 border border-indigo-500/30 rounded-xl text-xs font-semibold flex items-center gap-1.5 cursor-pointer">
+                  <i className="fa-solid fa-right-from-bracket"></i> Keluar
+                </button>
               </div>
             </div>
           </header>
@@ -890,7 +891,7 @@
           </nav>
 
           <main className="max-w-7xl mx-auto px-4 py-6 flex-grow w-full no-print-element">
-            
+
             {toastMsg && (
               <div className="fixed bottom-5 right-5 bg-slate-900 text-white px-4 py-3 rounded-2xl shadow-2xl z-50 flex items-center gap-3 text-xs border border-slate-700 animate-bounce">
                 <i className="fa-solid fa-circle-check text-emerald-400 text-base"></i><span>{toastMsg}</span>
@@ -903,7 +904,7 @@
               </div>
             )}
 
-            {}
+            {/* DASHBOARD */}
             {activeTab === 'dashboard' && (
               <div className="space-y-6">
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
@@ -965,7 +966,7 @@
               </div>
             )}
 
-            {}
+            {/* PERIZINAN */}
             {activeTab === 'perizinan' && (
               <div className="space-y-6">
                 <div className="flex flex-col sm:flex-row justify-between gap-3 bg-white p-4 rounded-2xl border border-slate-200 shadow-sm">
@@ -1019,7 +1020,7 @@
               </div>
             )}
 
-            {}
+            {/* REKAP HARIAN */}
             {activeTab === 'absensi' && (
               <div className="space-y-6">
                 <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm flex flex-col md:flex-row justify-between items-center gap-4">
@@ -1062,7 +1063,7 @@
               </div>
             )}
 
-            {}
+            {/* PESAN ORTU */}
             {activeTab === 'pesanOrtu' && (
               <div className="space-y-6">
                 <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
@@ -1115,7 +1116,7 @@
               </div>
             )}
 
-            {}
+            {/* TAGIH ABSENSI */}
             {activeTab === 'pengurus' && (
               <div className="space-y-6">
                 <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
@@ -1159,7 +1160,7 @@
               </div>
             )}
 
-            {}
+            {/* DOWNLOAD REKAP */}
             {activeTab === 'download' && (
               <div className="space-y-6">
                 <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm space-y-5">
@@ -1211,7 +1212,7 @@
                       )}
                     </div>
                   </div>
-                  
+
                   {rekapInfoText && <div className="text-xs font-semibold text-indigo-600 bg-indigo-50 p-2.5 rounded-lg border border-indigo-100">{rekapInfoText}</div>}
                 </div>
 
@@ -1264,7 +1265,7 @@
               </div>
             )}
 
-            {}
+            {/* JURNAL PIKET */}
             {activeTab === 'jurnal' && (
               <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
                 <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm h-fit">
@@ -1310,7 +1311,6 @@
             )}
           </main>
 
-          {}
           {/* MODALS */}
           {showPermModal && (
             <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4 no-print-element">
@@ -1323,7 +1323,7 @@
                     <i className="fa-solid fa-xmark text-lg"></i>
                   </button>
                 </div>
-                
+
                 <form onSubmit={handleAddPermission} className="space-y-4">
                   <div className="relative">
                     <label className="block text-xs font-semibold text-slate-600 mb-1">Cari Nama Siswa / NIS</label>
@@ -1339,7 +1339,7 @@
                       </div>
                     )}
                   </div>
-                  
+
                   <div className="flex items-center gap-2 mt-2">
                     <input type="checkbox" id="newStudentCheck" checked={isNewStudentMode} onChange={(e) => setIsNewStudentMode(e.target.checked)} className="rounded text-indigo-600 focus:ring-indigo-500 cursor-pointer"/>
                     <label htmlFor="newStudentCheck" className="text-xs font-semibold text-slate-600 cursor-pointer">Siswa belum terdaftar (Input Manual)</label>
@@ -1581,7 +1581,7 @@
                     <p className="text-[10px]">SMAN 1 PARUNG</p>
                     <p className="text-[10px] text-slate-400">--------------------------------</p>
                   </div>
-                  
+
                   <div className="space-y-1 text-[11px]">
                     <div className="flex justify-between"><span className="text-slate-500">No. Slip:</span><span className="font-bold">{printPreviewModal.slipNumber}</span></div>
                     <div className="flex justify-between"><span className="text-slate-500">Tanggal:</span><span>{printPreviewModal.date || ''}</span></div>
@@ -1644,7 +1644,7 @@
                 </tbody>
               </table>
               <p style={{ fontSize: '8pt', margin: '6px 0 2px 0', textAlign: 'center' }}>----------------------------------</p>
-              
+
               <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '10px', fontSize: '7.5pt', textAlign: 'center' }}>
                 <div style={{ width: '30%' }}>
                   <p style={{ margin: '0 0 5px 0' }}>Siswa,</p>
